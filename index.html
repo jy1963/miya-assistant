@@ -405,7 +405,13 @@ function closeSidebar() {
   document.getElementById('sidebar-overlay').classList.remove('show');
 }
 
-function init() { loadStorage(); setupUI(); renderAll(); setupMobileKeyboard(); }
+function init() {
+  loadStorage(); setupUI(); renderAll(); setupMobileKeyboard();
+  // Register Service Worker for offline support
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  }
+}
 
 function setupMobileKeyboard() {
   if (!('visualViewport' in window)) return;
@@ -629,34 +635,49 @@ function fallbackExtract() {
 }
 
 // ===== API =====
-async function callAPI(messages) {
+async function callAPI(messages, retries = 2) {
   const url = S.settings.apiUrl.replace(/\/$/,'')+'/chat/completions';
   const model = S.settings.model==='custom' ? document.getElementById('model-custom').value : S.settings.model;
   let temp = S.settings.temperature;
   if (S.settings.apiUrl.includes('xiaomimimo')) temp = Math.min(temp, 1.5);
   S.abortController = new AbortController();
-  const resp = await fetch(url, {
-    method:'POST',
-    headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.settings.apiKey},
-    body: JSON.stringify({ model, messages, temperature: temp, stream: true }),
-    signal: S.abortController.signal
-  });
-  if (!resp.ok) {
-    const errText = await resp.text();
-    if (resp.status === 400 || resp.status === 403 || resp.status === 422) {
-      const errLower = errText.toLowerCase();
-      if (errLower.includes('safety') || errLower.includes('content_policy') ||
-          errLower.includes('content filter') || errLower.includes('prohibited') ||
-          errLower.includes('policy') || errLower.includes('moderation') ||
-          errLower.includes('risk') || errLower.includes('违规') || errLower.includes('高风险')) {
-        throw new Error('内容安全检查未通过。这通常是因为对话历史中包含了敏感内容。\n💡 建议：1) 尝试开启"设置→Context深度→平衡模式"减少日记注入量；2) 清空对话后重新开始；3) 更换一个内容审查较宽松的 API 地址。');
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const resp = await fetch(url, {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.settings.apiKey},
+        body: JSON.stringify({ model, messages, temperature: temp, stream: true }),
+        signal: S.abortController.signal
+      });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        // Retry on 429/5xx
+        if ((resp.status === 429 || resp.status >= 500) && attempt < retries) {
+          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+          continue;
+        }
+        if (resp.status === 400 || resp.status === 403 || resp.status === 422) {
+          const errLower = errText.toLowerCase();
+          if (errLower.includes('safety') || errLower.includes('content_policy') ||
+              errLower.includes('content filter') || errLower.includes('prohibited') ||
+              errLower.includes('policy') || errLower.includes('moderation') ||
+              errLower.includes('risk') || errLower.includes('违规') || errLower.includes('高风险')) {
+            throw new Error('内容安全检查未通过。这通常是因为对话历史中包含了敏感内容。\n💡 建议：1) 尝试开启"设置→Context深度→平衡模式"减少日记注入量；2) 清空对话后重新开始；3) 更换一个内容审查较宽松的 API 地址。');
+          }
+        }
+        throw new Error(`API ${resp.status}: ${errText}`);
       }
+      S.tokenEstimate += messages.reduce((s,m) => s + m.content.length, 0) / 2;
+      document.getElementById('token-info').textContent = `Tokens: ~${Math.round(S.tokenEstimate/1000)}k`;
+      return resp;
+    } catch(e) {
+      lastErr = e;
+      if (e.name === 'AbortError') throw e;
+      if (attempt < retries) { await new Promise(r => setTimeout(r, 1500 * (attempt + 1))); continue; }
     }
-    throw new Error(`API ${resp.status}: ${errText}`);
   }
-  S.tokenEstimate += messages.reduce((s,m) => s + m.content.length, 0) / 2; // rough
-  document.getElementById('token-info').textContent = `Tokens: ~${Math.round(S.tokenEstimate/1000)}k`;
-  return resp;
+  throw lastErr;
 }
 
 async function* streamResp(resp) {
@@ -747,7 +768,40 @@ function removeThinkingBox() {
   }
 }
 
-// ===== Build Context =====
+// ===== Keyword-based relevance (replaces API pre-analyze) =====
+function findRelevant(userMsg) {
+  const words = userMsg.split(/[，。、？！\s,.?!]+/).filter(w => w.length >= 2);
+  // Score memories by keyword overlap
+  const memScores = S.memories.map((m, i) => {
+    let score = 0;
+    words.forEach(w => { if (m.content.includes(w)) score += 3; });
+    if (m.importance >= 4) score += 2;
+    return { idx: i, score, mem: m };
+  }).filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 5);
+
+  // Score diary by keyword overlap
+  const diaryScores = S.diary.map((d, i) => {
+    let score = 0;
+    words.forEach(w => { if (d.content.includes(w)) score += 2; });
+    if (d.aff > 60) score += 1;
+    return { idx: i, score, entry: d };
+  }).filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 5);
+
+  return {
+    memIds: memScores.map(x => S.memories[x.idx].id),
+    diaryIds: diaryScores.map(x => S.diary[x.idx].id)
+  };
+}
+
+function truncateText(text, maxLen) {
+  if (!text || text.length <= maxLen) return text;
+  // Try to cut at sentence boundary
+  const cut = text.lastIndexOf('。', maxLen);
+  if (cut > maxLen * 0.6) return text.slice(0, cut + 1);
+  return text.slice(0, maxLen) + '…';
+}
+
+// ===== Build Context (optimized for speed) =====
 function buildSystemPrompt() {
   let cp = null;
   const keys = Object.keys(S.prompts);
@@ -771,7 +825,6 @@ function buildSystemPrompt() {
     sp = '你是一个有个性的AI角色，以第一人称回复，保持角色一致性。\n';
   }
 
-  // Inject dynamic state
   const em = EM[S.emotion.cur]||EM.neutral;
   sp += `\n【当前状态】\n`;
   sp += `- 情绪: ${em.e} ${em.l}（${Math.round(S.emotion.intensity*100)}%）\n`;
@@ -783,299 +836,78 @@ function buildSystemPrompt() {
 
   if (S.settings.customSP) sp += '\n'+S.settings.customSP+'\n';
 
+  // Inline post-analysis instruction (replaces separate postAnalyze API call)
+  sp += `\n【回复格式】在回复末尾追加一行JSON（用---包裹），用于状态更新：
+---{"emotion":"情绪标签","intensity":0.5,"affChange":好感变化(-10~10),"trustChange":信任变化(-5~5),"diary":"值得记录时写50字日记否则null","mem":"值得记住时一句话概括否则null","memCat":"类别","memEm":"情绪","memImp":重要度1-5,"stage":"关系阶段","topic":"新话题否则null","summary":"一句话对话摘要"}---
+如果没有值得更新的，用最简JSON：---{"emotion":"neutral","intensity":0.5}---`;
+
   return sp;
 }
 
-function buildFullContext() {
+function buildFullContext(relevant = null) {
   let ctx = '';
 
-  // All diary (or subset based on depth)
+  // Smart diary selection: relevant + recent, capped
   const depth = S.settings.ctxDepth;
-  let diaryEntries;
-  if (depth === 'full') diaryEntries = S.diary;
-  else if (depth === 'deep') diaryEntries = S.diary.slice(-20);
-  else diaryEntries = S.diary.slice(-10);
+  let maxDiary = depth === 'full' ? 15 : depth === 'deep' ? 10 : 5;
+  let diaryEntries = [];
+
+  if (relevant?.diaryIds?.length) {
+    // Prioritize relevant entries
+    const relDiary = S.diary.filter(d => relevant.diaryIds.includes(d.id));
+    const recentDiary = S.diary.slice(-5);
+    const merged = [...new Set([...relDiary, ...recentDiary])];
+    diaryEntries = merged.slice(-maxDiary);
+  } else {
+    diaryEntries = S.diary.slice(-maxDiary);
+  }
 
   if (diaryEntries.length) {
     ctx += '═══ 日记 ═══\n';
-    diaryEntries.forEach((d,i) => {
-      ctx += `[#${i} ${d.date} ${d.time} | ❤️${d.aff} | ${d.mode}]\n${sanitizeForAPI(d.content)}\n\n`;
+    diaryEntries.forEach((d, i) => {
+      ctx += `[${d.date} ${d.time} | ❤️${d.aff}]\n${truncateText(sanitizeForAPI(d.content), 200)}\n\n`;
     });
   }
 
-  // All memories with links
-  if (S.memories.length) {
-    ctx += '═══ 记忆碎片 ═══\n';
-    S.memories.forEach((m,i) => {
+  // Smart memory selection: relevant + high importance + recent
+  let maxMem = depth === 'full' ? 15 : depth === 'deep' ? 10 : 5;
+  let memEntries = [];
+
+  if (relevant?.memIds?.length) {
+    const relMems = S.memories.filter(m => relevant.memIds.includes(m.id));
+    const importantMems = S.memories.filter(m => m.importance >= 4).slice(-5);
+    const merged = [...new Map([...relMems, ...importantMems].map(m => [m.id, m])).values()];
+    memEntries = merged.slice(-maxMem);
+  } else {
+    // Just high-importance + recent
+    const important = S.memories.filter(m => m.importance >= 4);
+    const recent = S.memories.slice(-5);
+    memEntries = [...new Map([...important, ...recent].map(m => [m.id, m])).values()].slice(-maxMem);
+  }
+
+  if (memEntries.length) {
+    ctx += '═══ 记忆 ═══\n';
+    memEntries.forEach(m => {
       const em = EM[m.emotion]||EM.neutral;
-      let line = `[#${i} ${em.e} ${m.category}|重要度${m.importance}] ${m.content}`;
-      if (m.links.length) {
-        const linked = m.links.map(lid => {
-          const li = S.memories.findIndex(x=>x.id===lid);
-          return li>=0 ? `#${li}` : '?';
-        });
-        line += ` [关联: ${linked.join(',')}]`;
-      }
-      ctx += line+'\n';
+      ctx += `${em.e} [${m.category}] ${truncateText(m.content, 80)}\n`;
     });
   }
 
-  // Emotion history
+  // Emotion history (last 5 only)
   if (S.emotion.history.length) {
     ctx += '\n═══ 情绪轨迹 ═══\n';
-    S.emotion.history.slice(-10).forEach(h => {
+    S.emotion.history.slice(-5).forEach(h => {
       const em = EM[h.emotion]||EM.neutral;
-      ctx += `${em.e} ${h.date}: ${h.emotion} - ${h.context||''}\n`;
+      ctx += `${em.e} ${h.date}: ${h.emotion}\n`;
     });
   }
 
-  // Relationship dynamics
-  ctx += '\n═══ 关系动态 ═══\n';
-  ctx += `阶段: ${S.relationship.stage}\n`;
-  if (S.relationship.userWants.length) ctx += `用户似乎想要: ${S.relationship.userWants.join(', ')}\n`;
-  if (S.relationship.charWants.length) ctx += `角色想要: ${S.relationship.charWants.join(', ')}\n`;
-  if (S.relationship.conflicts.length) ctx += `潜在冲突: ${S.relationship.conflicts.join(', ')}\n`;
-  if (S.relationship.lastEvent) ctx += `最近重大事件: ${S.relationship.lastEvent}\n`;
-
-  // Rolling summary
+  // Rolling summary (replaces older chat history)
   if (S.summary) ctx += `\n═══ 对话摘要 ═══\n${S.summary}\n`;
 
-  ctx += '\n请基于以上全部记忆和状态进行回复。自然引用日记和记忆中的内容，体现情感连续性和角色成长。禁止凭空捏造未记录的事件。';
+  ctx += '\n请基于以上记忆和状态回复。自然引用日记和记忆，体现情感连续性。';
 
   return ctx;
-}
-
-// ===== Pre-analysis (runs before each reply) =====
-async function preAnalyze(userMsg) {
-  const analysisPrompt = `你是对话分析引擎。分析以下用户消息，结合角色的所有记忆和状态，输出JSON。
-
-用户消息: "${userMsg}"
-
-当前状态:
-- 好感度: ${S.affection}
-- 信任: ${S.trust}
-- 情绪: ${S.emotion.cur}
-- 关系阶段: ${S.relationship.stage}
-- 活跃话题: ${S.topics.join(', ')}
-
-最近5条记忆:
-${S.memories.slice(-5).map((m,i)=>`${i}. ${m.content}`).join('\n')}
-
-分析并输出JSON:
-{
-  "relevantMemoryIdxs": [相关记忆的索引号数组],
-  "relevantDiaryIdxs": [相关日记的索引号数组],
-  "inferredIntent": "用户真正想要什么",
-  "emotionShift": "happy/love/shy/excited/sad/angry/jealous/neutral/anxious/mischievous/tender",
-  "emotionIntensity": 0-1的数字,
-  "newTopics": ["新出现的话题"],
-  "relationshipImpact": "此对话对关系的影响描述",
-  "tensionChange": -5到+5的整数,
-  "suggestedArc": "对此对话弧的判断：开端/发展/高潮/回落/尾声",
-  "subtext": "用户没说出口的潜台词是什么"
-}`;
-
-  try {
-    const resp = await callAPI([
-      { role:'system', content:'你是分析引擎。只输出JSON，不要任何其他文字。格式必须是合法JSON。' },
-      { role:'user', content: analysisPrompt }
-    ]);
-    let result = '';
-    for await (const c of streamResp(resp)) result += c;
-
-    const match = result.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-  } catch(e) { console.error('Pre-analyze failed:', e); }
-  return null;
-}
-
-function applyAnalysis(analysis) {
-  if (!analysis) return;
-
-  // Relevant memories
-  if (analysis.relevantMemoryIdxs?.length) {
-    // Mark as active (will be prioritized in context)
-    S._activeMems = analysis.relevantMemoryIdxs
-      .filter(i => i < S.memories.length)
-      .map(i => S.memories[i].id);
-  }
-
-  // Relevant diary
-  if (analysis.relevantDiaryIdxs?.length) {
-    S._activeDiary = analysis.relevantDiaryIdxs
-      .filter(i => i < S.diary.length)
-      .map(i => S.diary[i].id);
-  }
-
-  // Topics
-  if (analysis.newTopics?.length) {
-    analysis.newTopics.forEach(t => {
-      if (!S.topics.includes(t)) S.topics.push(t);
-    });
-    if (S.topics.length > 6) S.topics = S.topics.slice(-6);
-    updateTopicBar();
-  }
-
-  // Emotion
-  if (analysis.emotionShift && EM[analysis.emotionShift]) {
-    S.emotion.cur = analysis.emotionShift;
-    S.emotion.intensity = Math.min(1, Math.max(0, analysis.emotionIntensity || 0.5));
-  }
-
-  // Tension
-  if (analysis.tensionChange) {
-    S.relationship.tension = Math.max(0, Math.min(10, S.relationship.tension + analysis.tensionChange));
-  }
-
-  // Arc
-  if (analysis.suggestedArc) {
-    S.convArc.phase = analysis.suggestedArc;
-    S.convArc.beats.push({ phase: analysis.suggestedArc, ts: Date.now() });
-  }
-
-  // Relationship
-  if (analysis.relationshipImpact) {
-    S.relationship.lastEvent = analysis.relationshipImpact;
-  }
-  if (analysis.inferredIntent && !S.relationship.userWants.includes(analysis.inferredIntent)) {
-    S.relationship.userWants.push(analysis.inferredIntent);
-    if (S.relationship.userWants.length > 5) S.relationship.userWants = S.relationship.userWants.slice(-5);
-  }
-
-  // Store analysis for display
-  S._lastAnalysis = analysis;
-}
-
-// ===== Post-analysis (runs after each reply) =====
-async function postAnalyze(userMsg, aiReply) {
-  const postPrompt = `分析以下对话回合，更新角色状态。输出JSON。
-
-用户: "${userMsg}"
-角色回复: "${aiReply.slice(0, 500)}"
-
-当前好感: ${S.affection}  信任: ${S.trust}
-
-输出JSON:
-{
-  "diaryEntry": "如果值得记录，写一段第一人称日记（50-80字）。不值得则null",
-  "memoryContent": "如果此对话值得记住，一句话概括（30字内）。不值得则null",
-  "memoryCategory": "亲密/情感/日常/转折/高潮/晶片",
-  "memoryEmotion": "情绪标签",
-  "memoryImportance": 1-5,
-  "affectionChange": -10到+10的整数,
-  "trustChange": -5到+5的整数,
-  "emotionState": "角色当前情绪",
-  "emotionIntensity": 0-1,
-  "relationshipStage": "关系的新阶段描述",
-  "charWants": "角色想要什么",
-  "convSummary": "用一句话更新对话摘要"
-}`;
-
-  try {
-    const resp = await callAPI([
-      { role:'system', content:'你是状态管理器。只输出JSON，不要其他内容。' },
-      { role:'user', content: postPrompt }
-    ]);
-    let result = '';
-    for await (const c of streamResp(resp)) result += c;
-
-    const match = result.match(/\{[\s\S]*\}/);
-    if (match) {
-      const r = JSON.parse(match[0]);
-      applyPostAnalysis(r, userMsg, aiReply);
-      return r;
-    }
-  } catch(e) { console.error('Post-analyze failed:', e); }
-  return null;
-}
-
-function applyPostAnalysis(r) {
-  if (!r) return;
-
-  // Diary
-  if (r.diaryEntry) {
-    const now = new Date();
-    S.diary.push({
-      ts: now.toISOString(),
-      date: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`,
-      time: `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`,
-      aff: S.affection,
-      content: r.diaryEntry,
-      mode: 'Chat',
-      id: crypto.randomUUID(),
-      len: S.chat.length
-    });
-  }
-
-  // Memory
-  if (r.memoryContent) {
-    if (!S.memories.some(m => m.content === r.memoryContent)) {
-      const now = new Date();
-      const newMem = {
-        id: crypto.randomUUID(),
-        content: r.memoryContent,
-        ts: now.toISOString(),
-        date: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`,
-        tags: ['AI提取'], links: [],
-        srcDiaryId: null,
-        importance: r.memoryImportance || 2,
-        category: r.memoryCategory || '对话',
-        emotion: r.memoryEmotion || 'neutral'
-      };
-
-      // Auto-link with existing memories (AI-suggested)
-      autoLinkMemory(newMem);
-
-      S.memories.push(newMem);
-    }
-  }
-
-  // Affection/trust
-  if (r.affectionChange) S.affection = Math.max(0, Math.min(1000, S.affection + r.affectionChange));
-  if (r.trustChange) S.trust = Math.max(0, Math.min(100, S.trust + r.trustChange));
-
-  // Emotion
-  if (r.emotionState && EM[r.emotionState]) {
-    const now = new Date();
-    S.emotion.cur = r.emotionState;
-    S.emotion.intensity = r.emotionIntensity ?? 0.5;
-    S.emotion.history.push({
-      emotion: r.emotionState,
-      intensity: r.emotionIntensity,
-      date: `${now.getMonth()+1}/${now.getDate()}`,
-      context: r.convSummary || '',
-      ts: Date.now()
-    });
-    if (S.emotion.history.length > 30) S.emotion.history = S.emotion.history.slice(-30);
-  }
-
-  // Relationship
-  if (r.relationshipStage) S.relationship.stage = r.relationshipStage;
-  if (r.charWants && !S.relationship.charWants.includes(r.charWants)) {
-    S.relationship.charWants.push(r.charWants);
-    if (S.relationship.charWants.length > 5) S.relationship.charWants = S.relationship.charWants.slice(-5);
-  }
-
-  // Summary
-  if (r.convSummary) S.summary = r.convSummary;
-}
-
-function autoLinkMemory(newMem) {
-  // Use content similarity + same category + same emotion
-  const words = new Set(newMem.content.split(/[，。、？！\s]/).filter(w => w.length >= 2));
-
-  S.memories.forEach(m => {
-    let score = 0;
-    const otherWords = new Set(m.content.split(/[，。、？！\s]/).filter(w => w.length >= 2));
-    words.forEach(w => { if (otherWords.has(w)) score += 2; });
-    if (newMem.category === m.category) score += 2;
-    if (newMem.emotion === m.emotion) score += 1;
-
-    if (score >= 3) {
-      if (!newMem.links.includes(m.id)) newMem.links.push(m.id);
-      if (!m.links.includes(newMem.id)) m.links.push(newMem.id);
-    }
-  });
 }
 
 // ===== Stop =====
@@ -1085,7 +917,8 @@ function stopGeneration() {
   }
 }
 
-// ===== Send =====
+
+// ===== Send (optimized: 1 API call instead of 3) =====
 async function send() {
   const inp = document.getElementById('msg-input');
   const text = inp.value.trim();
@@ -1105,72 +938,55 @@ async function send() {
   S.chat.push({role:'user', content:text, ts:Date.now()});
   S.turns++;
 
-  // Show thinking indicator
-  const thinkSteps = ['🔍 理解你的意图', '📖 回忆相关日记', '💭 联想记忆碎片', '🎭 分析情感变化', '✍️ 组织回复'];
-  const thinkBox = addThinkingBox();
+  // Keyword-based relevance (instant, no API call)
+  const relevant = findRelevant(text);
 
-  let typing = null;
-  try {
-  // Step 1: Pre-analysis
-  let stepIdx = 0;
-  if (S.turns <= 2 || S.turns % 2 === 0) {
-    updateThinkingStep(thinkBox, stepIdx, thinkSteps);
-    const analysis = await preAnalyze(text);
-    applyAnalysis(analysis);
-
-    // Show analysis in chat
-    if (analysis) showAnalysisBox(analysis);
-  }
-  stepIdx = 1;
-
-  // Step 2: Recall (first time)
+  // Show recall on first message
   if (!S.recalled && (S.diary.length || S.memories.length)) {
+    S._activeMems = relevant.memIds;
+    S._activeDiary = relevant.diaryIds;
     showRecall(text);
     S.recalled = true;
   }
 
-  // Step 3: Generate reply
-  updateThinkingStep(thinkBox, stepIdx, thinkSteps);
-  typing = addTyping();
+  let typing = null;
+  try {
+    typing = addTyping();
+
+    // Build context with relevance-aware selection
     const sysPrompt = buildSystemPrompt();
-    const fullCtx = buildFullContext();
-    stepIdx = thinkSteps.length - 1;
-    updateThinkingStep(thinkBox, stepIdx, thinkSteps);
+    const fullCtx = buildFullContext(relevant);
 
     const messages = [
       { role:'system', content: sysPrompt + '\n\n' + fullCtx }
     ];
 
-    // Add active memory highlights if any
-    if (S._activeMems?.length) {
-      let hCtx = '【本轮对话直接相关的记忆】\n';
-      S._activeMems.forEach(id => {
-        const m = S.memories.find(x=>x.id===id);
-        if (m) hCtx += `• ${m.content} (${m.date})\n`;
-      });
-      messages.push({role:'system', content:hCtx});
-    }
-
-    // Chat history
+    // Chat history (capped)
+    const historyCap = S.chat.length > 12 && S.summary ? 12 : 30;
     if (S.summary && S.chat.length > 12) {
-      messages.push({role:'system', content:`对话摘要: ${S.summary}`});
-      S.chat.slice(-12).forEach(m => messages.push({role:m.role, content:m.content}));
-    } else {
-      S.chat.slice(-30).forEach(m => messages.push({role:m.role, content:m.content}));
+      messages.push({role:'system', content:'对话摘要: ' + S.summary});
     }
+    S.chat.slice(-historyCap).forEach(m => messages.push({role:m.role, content:m.content}));
 
     const resp = await callAPI(messages);
     typing.remove();
     const el = addMsg('ai','',true);
     let full = '';
     for await (const c of streamResp(resp)) { full += c; updMsg(el,full); }
-    el.querySelector('.bubble').textContent = full;
-    S.chat.push({role:'assistant', content:full, ts:Date.now()});
 
-    // Step 4: Post-analysis
-    removeThinkingBox();
-    showToast('📝 记录中...');
-    await postAnalyze(text, full);
+    // Parse inline status JSON from end of response
+    let displayText = full;
+    const jsonMatch = full.match(/\n*---\s*(\{[\s\S]*?\})\s*---\s*$/);
+    if (jsonMatch) {
+      displayText = full.slice(0, jsonMatch.index).trimEnd();
+      try {
+        const r = JSON.parse(jsonMatch[1]);
+        applyInlineAnalysis(r);
+      } catch(e) { /* ignore parse errors */ }
+    }
+
+    el.querySelector('.bubble').textContent = displayText;
+    S.chat.push({role:'assistant', content:displayText, ts:Date.now()});
 
     // Update UI
     updateEmotionUI();
@@ -1180,17 +996,12 @@ async function send() {
     renderRelPanel();
     saveStorage();
 
-    // Clear active
-    delete S._activeMems;
-    delete S._activeDiary;
-
   } catch(e) {
     if (typing) typing.remove();
-    removeThinkingBox();
     if (e.name === 'AbortError') {
       addMsg('ai', '⏹️ 已终止生成');
     } else {
-      addMsg('ai', `⚠️ ${e.message}`);
+      addMsg('ai', '⚠️ ' + e.message);
     }
   } finally {
     S.busy = false;
@@ -1199,6 +1010,82 @@ async function send() {
     document.getElementById('stop-btn').style.display = 'none';
     document.getElementById('status-dot').className = 'dot idle';
   }
+}
+
+// ===== Inline analysis (parsed from model response, no extra API call) =====
+function applyInlineAnalysis(r) {
+  if (!r) return;
+
+  // Emotion
+  if (r.emotion && EM[r.emotion]) {
+    S.emotion.cur = r.emotion;
+    S.emotion.intensity = Math.min(1, Math.max(0, r.intensity ?? 0.5));
+    const now = new Date();
+    S.emotion.history.push({
+      emotion: r.emotion, intensity: r.intensity,
+      date: (now.getMonth()+1)+'/'+now.getDate(),
+      context: r.summary || '', ts: Date.now()
+    });
+    if (S.emotion.history.length > 30) S.emotion.history = S.emotion.history.slice(-30);
+  }
+
+  // Affection/trust
+  if (r.affChange) S.affection = Math.max(0, Math.min(1000, S.affection + r.affChange));
+  if (r.trustChange) S.trust = Math.max(0, Math.min(100, S.trust + r.trustChange));
+
+  // Diary
+  if (r.diary && r.diary !== 'null') {
+    const now = new Date();
+    S.diary.push({
+      ts: now.toISOString(),
+      date: now.getFullYear()+'/'+(now.getMonth()+1)+'/'+now.getDate(),
+      time: String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'),
+      aff: S.affection, content: r.diary, mode: 'Chat',
+      id: crypto.randomUUID(), len: S.chat.length
+    });
+  }
+
+  // Memory
+  if (r.mem && r.mem !== 'null' && !S.memories.some(m => m.content === r.mem)) {
+    const now = new Date();
+    const newMem = {
+      id: crypto.randomUUID(), content: r.mem, ts: now.toISOString(),
+      date: now.getFullYear()+'/'+(now.getMonth()+1)+'/'+now.getDate(),
+      tags: ['AI提取'], links: [], srcDiaryId: null,
+      importance: r.memImp || 2, category: r.memCat || '对话', emotion: r.memEm || 'neutral'
+    };
+    autoLinkMemory(newMem);
+    S.memories.push(newMem);
+  }
+
+  // Relationship
+  if (r.stage) S.relationship.stage = r.stage;
+
+  // Topic
+  if (r.topic && r.topic !== 'null') {
+    if (!S.topics.includes(r.topic)) S.topics.push(r.topic);
+    if (S.topics.length > 6) S.topics = S.topics.slice(-6);
+    updateTopicBar();
+  }
+
+  // Summary
+  if (r.summary) S.summary = r.summary;
+}
+
+// We still need autoLinkMemory for the inline analysis
+function autoLinkMemory(newMem) {
+  const words = new Set(newMem.content.split(/[，。、？！\s]/).filter(w => w.length >= 2));
+  S.memories.forEach(m => {
+    let score = 0;
+    const otherWords = new Set(m.content.split(/[，。、？！\s]/).filter(w => w.length >= 2));
+    words.forEach(w => { if (otherWords.has(w)) score += 2; });
+    if (newMem.category === m.category) score += 2;
+    if (newMem.emotion === m.emotion) score += 1;
+    if (score >= 3) {
+      if (!newMem.links.includes(m.id)) newMem.links.push(m.id);
+      if (!m.links.includes(newMem.id)) m.links.push(newMem.id);
+    }
+  });
 }
 
 // ===== UI: Messages =====

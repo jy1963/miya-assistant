@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Miya Assistant</title>
+<style>
+body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#0f0f1a;color:#eee;font-family:sans-serif;text-align:center}
+.box{padding:40px}
+h1{font-size:48px;margin:0 0 12px}
+p{color:#aaa;margin:8px 0}
+a{color:#e94560;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="box">
+<h1>🌸</h1>
+<h2>页面加载失败</h2>
+<p>可能是网络问题，请检查连接后重试。</p>
+<p><a href="./">← 返回 Miya</a></p>
+<script>
+// Auto-redirect to index if service worker has it cached
+if ('caches' in window) {
+  caches.match('./index.html').then(r => {
+    if (r) location.href = './';
+  });
+}
+</script>
+</div>
+</body>
+</html>
