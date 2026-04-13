@@ -111,6 +111,8 @@ body { font-family: -apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',san
 #send-btn:disabled { opacity:.5; cursor:not-allowed; }
 #stop-btn { display:none; width:42px; height:42px; border-radius:50%; background:var(--red); border:none; color:white; font-size:16px; cursor:pointer; align-items:center; justify-content:center; flex-shrink:0; transition:all .2s; animation: pulse 1.5s infinite; }
 #stop-btn:hover { background:#dc2626; transform:scale(1.1); }
+#end-btn { display:none; width:42px; height:42px; border-radius:50%; background:var(--purple); border:none; color:white; font-size:15px; cursor:pointer; align-items:center; justify-content:center; flex-shrink:0; transition:all .2s; }
+#end-btn:hover { background:#6d28d9; transform:scale(1.05); }
 
 /* Settings */
 .sg { margin-bottom:14px; }
@@ -199,9 +201,12 @@ body { font-family: -apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',san
   #menu-btn { padding:8px 12px; min-width:44px; min-height:44px; }
   .sb-tab { padding:12px 0; font-size:12px; }
   .bubble { max-width:85%; }
+  .msg.ai .bubble { white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere; }
+  .msg.user .bubble { white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere; }
   .sb-body { -webkit-overflow-scrolling: touch; }
   #send-btn { min-width:48px; min-height:48px; }
   #stop-btn { min-width:48px; min-height:48px; }
+  #end-btn { min-width:48px; min-height:48px; }
   #input-area { position:sticky; bottom:0; }
 }
 </style>
@@ -240,6 +245,7 @@ body { font-family: -apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',san
           <button class="btn btn-s btn-sm" onclick="clearChat()">🗑️ 清空</button>
           <button class="btn btn-s btn-sm" onclick="forceRecall()">🧠 回忆</button>
           <button class="btn btn-s btn-sm" onclick="deepAnalyze()">🔬 深度分析</button>
+          <button class="btn btn-a btn-sm" onclick="endConversation()" id="end-conv-btn" style="display:none;">📋 结束对话</button>
         </div>
       </div>
 
@@ -331,6 +337,7 @@ body { font-family: -apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',san
         <textarea id="msg-input" placeholder="输入消息..." rows="1"></textarea>
         <button id="send-btn">➤</button>
         <button id="stop-btn">■</button>
+        <button id="end-btn" title="结束对话并保存日记">📋</button>
       </div>
     </div>
   </div>
@@ -463,6 +470,7 @@ function setupUI() {
   document.getElementById('close-sidebar').addEventListener('click', closeSidebar);
   document.getElementById('send-btn').addEventListener('click', send);
   document.getElementById('stop-btn').addEventListener('click', stopGeneration);
+  document.getElementById('end-btn').addEventListener('click', endConversation);
   const inp = document.getElementById('msg-input');
   inp.addEventListener('keydown', e => { if (e.key==='Enter'&&!e.shiftKey) { e.preventDefault(); send(); } });
   inp.addEventListener('input', () => { inp.style.height='auto'; inp.style.height=Math.min(inp.scrollHeight,120)+'px'; });
@@ -938,6 +946,11 @@ async function send() {
   S.chat.push({role:'user', content:text, ts:Date.now()});
   S.turns++;
 
+  // Show end conversation button
+  document.getElementById('end-btn').style.display = 'flex';
+  const ecb = document.getElementById('end-conv-btn');
+  if (ecb) ecb.style.display = 'inline-block';
+
   // Keyword-based relevance (instant, no API call)
   const relevant = findRelevant(text);
 
@@ -1241,6 +1254,9 @@ function renderAll() {
     const w = document.getElementById('welcome');
     if (w) w.remove();
     S.chat.forEach(m => addMsg(m.role, m.content));
+    document.getElementById('end-btn').style.display = 'flex';
+    const ecb = document.getElementById('end-conv-btn');
+    if (ecb) ecb.style.display = 'inline-block';
   }
 }
 
@@ -1250,11 +1266,15 @@ function renderDiary(search='') {
   if (!S.diary.length) { list.innerHTML='<div class="empty"><p>还没有日记</p></div>'; return; }
   let entries = [...S.diary].reverse();
   if (search) entries = entries.filter(d => d.content.includes(search)||d.date.includes(search));
-  list.innerHTML = entries.slice(0,100).map(d => `
-    <div class="diary-entry" onclick="showDiaryDetail('${d.id}')">
-      <div class="de-date"><span>📅 ${d.date} ${d.time}</span><span>❤️${d.aff}</span><span>${d.mode}</span></div>
-      <div class="de-preview">${d.content.slice(0,120)}...</div>
-    </div>`).join('');
+  list.innerHTML = entries.slice(0,100).map(d => {
+    const isSummary = d.mode === 'ChatSummary';
+    const icon = isSummary ? '📋' : '📅';
+    const modeLabel = isSummary ? '对话总结' : d.mode;
+    return `<div class="diary-entry" onclick="showDiaryDetail('${d.id}')" ${isSummary ? 'style="border-left:3px solid var(--purple);"' : ''}>
+      <div class="de-date"><span>${icon} ${d.date} ${d.time}</span><span>❤️${d.aff}</span><span>${modeLabel}</span>${isSummary ? `<span style="color:var(--txt3);">${d.len||0}条消息</span>` : ''}</div>
+      <div class="de-preview">${d.content.slice(0,120)}${d.content.length>120?'...':''}</div>
+    </div>`;
+  }).join('');
 }
 
 function renderMemory() {
@@ -1476,7 +1496,99 @@ function clearChat() {
   S.chat=[]; S.recalled=false; S.turns=0; S.topics=[]; S.summary='';
   S.convArc={phase:'开端',beats:[]}; S.relationship.tension=0;
   document.getElementById('chat').innerHTML='<div class="empty" id="welcome"><div class="icon">🌸</div><h3>对话已清空</h3></div>';
+  document.getElementById('end-btn').style.display = 'none';
+  const ecb = document.getElementById('end-conv-btn');
+  if (ecb) ecb.style.display = 'none';
   saveStorage(); updateTopicBar(); showToast('✅ 已清空');
+}
+
+// ===== End Conversation =====
+async function endConversation() {
+  if (!S.chat.length) { showToast('没有对话内容'); return; }
+  if (S.busy) { showToast('请等待回复完成'); return; }
+
+  const confirmEnd = confirm('结束对话？\n本次聊天将以日记形式保存，然后清空对话。');
+  if (!confirmEnd) return;
+
+  // Build chat transcript
+  const transcript = S.chat.map(m => {
+    const label = m.role === 'user' ? '用户' : '角色';
+    return `${label}: ${m.content}`;
+  }).join('\n');
+
+  let diaryContent = '';
+
+  // Try AI summary if API is configured
+  if (S.settings.apiKey && transcript.length > 50) {
+    try {
+      showToast('📝 正在生成日记...');
+      const prompt = `你是一个日记撰写助手。以下是一段对话记录，请以第一人称（角色视角）写一段简要日记（100-200字），记录这次对话的关键内容、情感变化和重要事件。用中文。
+
+对话记录：
+${transcript.slice(0, 4000)}
+
+只输出日记正文，不要标题或日期。`;
+
+      const resp = await callAPI([
+        { role: 'system', content: '你是日记撰写助手，只输出日记正文。' },
+        { role: 'user', content: prompt }
+      ], 1);
+      for await (const c of streamResp(resp)) diaryContent += c;
+      diaryContent = diaryContent.trim();
+    } catch(e) {
+      console.error('AI diary summary failed:', e);
+    }
+  }
+
+  // Fallback: simple summary
+  if (!diaryContent) {
+    const userMsgs = S.chat.filter(m => m.role === 'user').map(m => m.content.slice(0, 50));
+    diaryContent = `与角色进行了一次对话。讨论了：${userMsgs.join('；')}。`;
+  }
+
+  // Save as diary entry
+  const now = new Date();
+  S.diary.push({
+    ts: now.toISOString(),
+    date: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`,
+    time: `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`,
+    aff: S.affection,
+    content: diaryContent,
+    mode: 'ChatSummary',
+    id: crypto.randomUUID(),
+    len: S.chat.length
+  });
+
+  // Also create a memory for this session
+  if (diaryContent.length > 20) {
+    S.memories.push({
+      id: crypto.randomUUID(),
+      content: diaryContent.slice(0, 100),
+      ts: now.toISOString(),
+      date: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`,
+      tags: ['对话总结'], links: [], srcDiaryId: null,
+      importance: 2, category: '日常', emotion: S.emotion.cur
+    });
+  }
+
+  // Reset chat state
+  S.chat = [];
+  S.recalled = false;
+  S.turns = 0;
+  S.summary = '';
+  S.convArc = { phase: '开端', beats: [] };
+  S.relationship.tension = 0;
+
+  // Update UI
+  document.getElementById('chat').innerHTML = '<div class="empty" id="welcome"><div class="icon">🌸</div><h3>对话已结束</h3><p>日记已保存 ✓</p></div>';
+  document.getElementById('end-btn').style.display = 'none';
+  const ecb = document.getElementById('end-conv-btn');
+  if (ecb) ecb.style.display = 'none';
+
+  saveStorage();
+  renderDiary();
+  renderMemory();
+  showToast('📋 对话已保存为日记');
 }
 
 function showToast(msg) {
