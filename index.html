@@ -1,0 +1,1607 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
+<title>Miya Assistant - Unlimited</title>
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a1a2e">
+<style>
+:root {
+  --bg: #0f0f1a; --bg2: #1a1a2e; --bg3: #16213e; --card: #1e1e36;
+  --accent: #e94560; --accent2: #c73e54;
+  --txt: #eee; --txt2: #aaa; --txt3: #666;
+  --border: #2a2a4a;
+  --green: #4ade80; --yellow: #fbbf24; --red: #ef4444; --blue: #60a5fa; --pink: #ec4899; --purple: #7c3aed;
+  --user-bg: #2d2d5e; --ai-bg: #1e2a4a;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; background:var(--bg); color:var(--txt); height:100vh; overflow:hidden; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+::-webkit-scrollbar { width:5px; } ::-webkit-scrollbar-track { background:transparent; } ::-webkit-scrollbar-thumb { background:#3a3a5a; border-radius:3px; }
+
+#app { display:flex; height:100vh; }
+
+/* Sidebar */
+#sidebar { width:300px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; z-index:100; flex-shrink:0; transition:margin-left 0.3s ease; }
+#sidebar.collapsed { margin-left:-300px; }
+#sidebar-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:99; }
+.sb-head { padding:14px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+.sb-head h2 { font-size:15px; color:var(--accent); }
+.sb-tabs { display:flex; border-bottom:1px solid var(--border); overflow-x:auto; }
+.sb-tab { flex:1; padding:9px 0; text-align:center; font-size:11px; color:var(--txt2); cursor:pointer; border-bottom:2px solid transparent; transition:all .2s; white-space:nowrap; }
+.sb-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.sb-body { flex:1; overflow-y:auto; padding:12px; }
+.panel { display:none; } .panel.active { display:block; }
+
+/* Main */
+#main { flex:1; display:flex; flex-direction:column; min-width:0; }
+#topbar { height:52px; background:var(--bg2); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 16px; gap:10px; flex-shrink:0; }
+#menu-btn { background:none; border:none; color:var(--txt2); font-size:20px; cursor:pointer; padding:4px 8px; }
+#top-name { font-size:15px; font-weight:600; flex:1; }
+#top-emotion { font-size:12px; }
+.dot { width:8px; height:8px; border-radius:50%; }
+.dot.thinking { background:var(--yellow); animation: pulse 1s infinite; }
+.dot.idle { background:var(--green); }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+
+/* Topic bar */
+.topic-bar { display:flex; align-items:center; gap:6px; padding:5px 16px; background:rgba(30,42,74,.5); border-bottom:1px solid var(--border); font-size:11px; color:var(--txt3); flex-shrink:0; }
+.topic-pill { background:var(--card); padding:2px 8px; border-radius:10px; font-size:10px; }
+
+/* Chat */
+#chat { flex:1; overflow-y:auto; padding:16px; scroll-behavior:smooth; }
+.msg { display:flex; margin-bottom:14px; animation: msgIn .3s; }
+@keyframes msgIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+.msg.user { justify-content:flex-end; }
+.bubble { max-width:75%; padding:10px 14px; border-radius:16px; font-size:14px; line-height:1.65; word-break:break-word; white-space:pre-wrap; }
+.msg.ai .bubble { background:var(--ai-bg); border-bottom-left-radius:4px; }
+.msg.user .bubble { background:var(--user-bg); border-bottom-right-radius:4px; }
+.meta { font-size:11px; color:var(--txt3); margin-top:4px; } .msg.user .meta { text-align:right; }
+
+/* Analysis panel in chat */
+.analysis-box {
+  background: linear-gradient(135deg, rgba(124,58,237,.06), rgba(233,69,96,.04));
+  border: 1px solid rgba(124,58,237,.2);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--txt2);
+  animation: msgIn .5s;
+  cursor: pointer;
+  transition: border-color .2s;
+}
+.analysis-box:hover { border-color: var(--purple); }
+.analysis-box .ab-title { font-size:11px; font-weight:600; margin-bottom:6px; display:flex; align-items:center; gap:6px; }
+.analysis-box .ab-title span { font-size:16px; }
+.analysis-box .ab-row { padding:2px 0; line-height:1.5; }
+.analysis-box .ab-tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+.ab-tag { font-size:10px; padding:1px 6px; border-radius:8px; }
+.ab-tag-emotion { background:rgba(236,72,153,.2); color:#f472b6; }
+.ab-tag-topic { background:rgba(96,165,250,.2); color:#93c5fd; }
+.ab-tag-memory { background:rgba(124,58,237,.2); color:#a78bfa; }
+.ab-tag-relation { background:rgba(251,191,36,.2); color:#fcd34d; }
+
+/* Recall */
+.recall-box {
+  background: linear-gradient(135deg, rgba(5,150,105,.06), rgba(124,58,237,.04));
+  border: 1px solid rgba(5,150,105,.25);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  animation: msgIn .5s;
+}
+.recall-section { margin-bottom:8px; } .recall-section:last-child { margin-bottom:0; }
+.recall-title { font-size:11px; font-weight:600; margin-bottom:4px; display:flex; align-items:center; gap:4px; }
+.recall-title.diary { color:var(--green); }
+.recall-title.memory { color:var(--purple); }
+.recall-title.emotion { color:var(--pink); }
+.recall-title.arc { color:var(--yellow); }
+.recall-item { font-size:12px; color:var(--txt2); padding:2px 0; line-height:1.45; }
+.recall-item .dt { color:var(--txt3); font-size:10px; }
+
+/* Input */
+#input-area { padding:12px 16px; background:var(--bg2); border-top:1px solid var(--border); flex-shrink:0; }
+.input-row { display:flex; gap:8px; align-items:flex-end; }
+#msg-input { flex:1; background:var(--bg3); border:1px solid var(--border); border-radius:20px; padding:10px 16px; color:var(--txt); font-size:14px; resize:none; max-height:120px; min-height:42px; outline:none; font-family:inherit; }
+#msg-input:focus { border-color:var(--accent); }
+#send-btn { width:42px; height:42px; border-radius:50%; background:var(--accent); border:none; color:white; font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:background .2s; }
+#send-btn:hover { background:var(--accent2); }
+#send-btn:disabled { opacity:.5; cursor:not-allowed; }
+#stop-btn { display:none; width:42px; height:42px; border-radius:50%; background:var(--red); border:none; color:white; font-size:16px; cursor:pointer; align-items:center; justify-content:center; flex-shrink:0; transition:all .2s; animation: pulse 1.5s infinite; }
+#stop-btn:hover { background:#dc2626; transform:scale(1.1); }
+
+/* Settings */
+.sg { margin-bottom:14px; }
+.sg label { display:block; font-size:12px; color:var(--txt2); margin-bottom:5px; }
+.sg input, .sg select, .sg textarea { width:100%; background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:8px 12px; color:var(--txt); font-size:13px; outline:none; font-family:inherit; }
+.sg input:focus, .sg select:focus, .sg textarea:focus { border-color:var(--accent); }
+.sg textarea { min-height:80px; resize:vertical; }
+
+.btn { display:inline-block; padding:7px 14px; border-radius:8px; border:none; font-size:12px; cursor:pointer; transition:all .2s; }
+.btn-a { background:var(--accent); color:white; } .btn-a:hover { background:var(--accent2); }
+.btn-s { background:var(--bg3); color:var(--txt2); border:1px solid var(--border); } .btn-s:hover { background:var(--border); color:var(--txt); }
+.btn-sm { padding:4px 10px; font-size:11px; }
+.btns { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+
+/* Diary */
+.diary-entry { background:var(--card); border-radius:10px; padding:10px 12px; margin-bottom:8px; font-size:13px; cursor:pointer; transition:all .2s; border:1px solid transparent; }
+.diary-entry:hover { border-color:var(--accent); }
+.diary-entry .de-date { font-size:11px; color:var(--accent); margin-bottom:4px; display:flex; gap:8px; align-items:center; }
+.diary-entry .de-preview { color:var(--txt2); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+
+/* Memory */
+.mem-item { background:var(--card); border-radius:10px; padding:10px 12px; margin-bottom:8px; border-left:3px solid var(--purple); }
+.mem-item .mi-content { font-size:13px; margin-bottom:6px; }
+.mem-item .mi-meta { font-size:11px; color:var(--txt3); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.mem-links { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+.mem-link { background:rgba(124,58,237,.2); color:#a78bfa; font-size:11px; padding:2px 8px; border-radius:8px; cursor:pointer; }
+
+/* Char card */
+.char-card { background:var(--card); border-radius:12px; padding:16px; text-align:center; }
+.char-card .cc-name { font-size:18px; font-weight:bold; color:var(--accent); margin-bottom:4px; }
+.char-card .cc-sub { font-size:12px; color:var(--txt2); margin-bottom:12px; }
+.stat { display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:12px; }
+.stat .label { width:50px; color:var(--txt2); }
+.stat .bar { flex:1; height:6px; background:var(--bg3); border-radius:3px; overflow:hidden; }
+.stat .fill { height:100%; border-radius:3px; transition:width .5s; }
+.stat .fill.aff { background:var(--accent); }
+.stat .fill.trust { background:var(--green); }
+
+/* Thinking indicator */
+.thinking-box {
+  background: linear-gradient(135deg, rgba(251,191,36,.08), rgba(96,165,250,.06));
+  border: 1px solid rgba(251,191,36,.2);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--yellow);
+  animation: msgIn .3s;
+}
+.thinking-box .tb-step { display:flex; align-items:center; gap:6px; padding:3px 0; color:var(--txt2); }
+.thinking-box .tb-step.active { color:var(--yellow); font-weight:600; }
+.thinking-box .tb-step.done { color:var(--green); }
+.thinking-box .tb-step .spinner { display:inline-block; width:12px; height:12px; border:2px solid var(--txt3); border-top-color:var(--yellow); border-radius:50%; animation:spin .8s linear infinite; }
+.thinking-box .tb-step .check { color:var(--green); }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* Typing */
+.typing { display:flex; gap:4px; padding:8px 12px; }
+.typing-dot { width:8px; height:8px; background:var(--txt3); border-radius:50%; animation:tb 1.4s infinite; }
+.typing-dot:nth-child(2) { animation-delay:.2s; } .typing-dot:nth-child(3) { animation-delay:.4s; }
+@keyframes tb { 0%,60%,100% { transform:translateY(0); } 30% { transform:translateY(-8px); } }
+
+.empty { text-align:center; padding:40px 20px; color:var(--txt3); }
+.empty .icon { font-size:48px; margin-bottom:12px; }
+.empty h3 { color:var(--txt2); margin-bottom:8px; }
+.file-input { display:none; }
+
+/* Modal */
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:1000; display:flex; align-items:center; justify-content:center; }
+.modal-body { background:var(--bg2); border-radius:16px; padding:24px; max-width:650px; width:90%; max-height:80vh; overflow-y:auto; }
+.modal-body h3 { color:var(--accent); margin-bottom:12px; }
+.modal-body .content { font-size:14px; line-height:1.7; white-space:pre-wrap; }
+.modal-x { float:right; background:none; border:none; color:var(--txt2); font-size:24px; cursor:pointer; }
+
+/* Toast */
+.toast { position:fixed; bottom:80px; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--border); color:var(--txt); padding:10px 20px; border-radius:20px; font-size:13px; z-index:2000; animation:toastIn .3s; }
+@keyframes toastIn { from { opacity:0; transform:translateX(-50%) translateY(10px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+
+/* Token counter */
+#token-info { position:fixed; bottom:70px; right:16px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:6px 12px; font-size:11px; color:var(--txt3); z-index:50; }
+
+@media(max-width:768px) {
+  #sidebar { position:fixed; left:0; top:0; bottom:0; width:300px; margin-left:-300px; z-index:200; pointer-events:none; transition:margin-left 0.3s ease; }
+  #sidebar.open { margin-left:0; pointer-events:auto; }
+  #sidebar-overlay.show { display:block; z-index:199; }
+  #menu-btn { padding:8px 12px; min-width:44px; min-height:44px; }
+  .sb-tab { padding:12px 0; font-size:12px; }
+  .bubble { max-width:85%; }
+  .sb-body { -webkit-overflow-scrolling: touch; }
+  #send-btn { min-width:48px; min-height:48px; }
+  #stop-btn { min-width:48px; min-height:48px; }
+  #input-area { position:sticky; bottom:0; }
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="sidebar">
+    <div class="sb-head">
+      <h2>🏠 Miya Unlimited</h2>
+      <button id="close-sidebar" style="background:none;border:none;color:var(--txt2);font-size:20px;cursor:pointer;">×</button>
+    </div>
+    <div class="sb-tabs">
+      <div class="sb-tab active" data-tab="char">角色</div>
+      <div class="sb-tab" data-tab="diary">日记</div>
+      <div class="sb-tab" data-tab="memory">记忆</div>
+      <div class="sb-tab" data-tab="rel">关系</div>
+      <div class="sb-tab" data-tab="set">设置</div>
+    </div>
+    <div class="sb-body">
+      <div class="panel active" id="panel-char">
+        <div class="char-card">
+          <div class="icon" style="font-size:36px;">👤</div>
+          <div class="cc-name" id="cc-name">未加载</div>
+          <div class="cc-sub" id="cc-sub">请先导入日记数据</div>
+          <div style="margin-top:12px;">
+            <div class="stat"><span class="label">好感</span><div class="bar"><div class="fill aff" id="bar-aff" style="width:0%"></div></div><span id="v-aff">0</span></div>
+            <div class="stat"><span class="label">信任</span><div class="bar"><div class="fill trust" id="bar-trust" style="width:0%"></div></div><span id="v-trust">0</span></div>
+          </div>
+          <div id="cc-emotion" style="margin-top:10px;font-size:12px;color:var(--txt2);">情绪: 待定</div>
+          <div id="cc-topics" style="margin-top:6px;font-size:11px;color:var(--txt3);"></div>
+          <div id="cc-arc" style="margin-top:6px;font-size:11px;color:var(--txt3);">对话弧: 初始</div>
+        </div>
+        <div class="btns" style="margin-top:12px;">
+          <button class="btn btn-s btn-sm" onclick="exportData()">📥 导出</button>
+          <button class="btn btn-s btn-sm" onclick="clearChat()">🗑️ 清空</button>
+          <button class="btn btn-s btn-sm" onclick="forceRecall()">🧠 回忆</button>
+          <button class="btn btn-s btn-sm" onclick="deepAnalyze()">🔬 深度分析</button>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-diary">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <span style="font-size:14px;font-weight:600;">日记 (<span id="diary-n">0</span>)</span>
+          <input type="text" id="diary-search" placeholder="搜索..." style="width:110px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--txt);font-size:12px;outline:none;">
+        </div>
+        <div id="diary-list"></div>
+      </div>
+
+      <div class="panel" id="panel-memory">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <span style="font-size:14px;font-weight:600;">记忆 (<span id="mem-n">0</span>)</span>
+          <button class="btn btn-s btn-sm" onclick="addMemoryManual()">+ 添加</button>
+        </div>
+        <select id="mem-filter" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--txt);font-size:12px;outline:none;margin-bottom:10px;">
+          <option value="all">全部</option>
+          <option value="auto">AI提取</option>
+          <option value="manual">手动</option>
+          <option value="linked">有关联</option>
+        </select>
+        <div id="mem-list"></div>
+      </div>
+
+      <div class="panel" id="panel-rel">
+        <div style="font-size:14px;font-weight:600;margin-bottom:10px;">关系动态</div>
+        <div id="rel-dynamics" style="margin-bottom:16px;"></div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:10px;">关键事件时间线</div>
+        <div id="rel-timeline"></div>
+      </div>
+
+      <div class="panel" id="panel-set">
+        <div class="sg"><label>🔗 API 地址</label><input type="text" id="api-url" placeholder="https://api.deepseek.com/v1"></div>
+        <div class="sg"><label>🔑 API Key</label><input type="password" id="api-key" placeholder="sk-xxx..."></div>
+        <div class="sg"><label>🤖 模型</label>
+          <select id="model-sel">
+            <option value="deepseek-chat">deepseek-chat</option>
+            <option value="deepseek-reasoner">deepseek-reasoner</option>
+            <option value="gpt-4o">gpt-4o</option>
+            <option value="gpt-4o-mini">gpt-4o-mini</option>
+            <option value="custom">自定义...</option>
+          </select>
+          <input type="text" id="model-custom" placeholder="模型名" style="margin-top:6px;display:none;">
+        </div>
+        <div class="sg"><label>🌡️ Temperature <span id="tv">0.9</span></label>
+          <input type="range" id="temp" min="0" max="2" step="0.1" value="0.9" style="width:100%;">
+        </div>
+        <div class="sg"><label>📊 Context 深度</label>
+          <select id="ctx-depth">
+            <option value="full">完整模式（全部日记+全部记忆）</option>
+            <option value="deep">深度模式（最近20篇日记+全部记忆）</option>
+            <option value="balanced">平衡模式（最近10篇+相关记忆）</option>
+          </select>
+          <div style="font-size:10px;color:var(--txt3);margin-top:4px;">⚠️ 若遇到"高风险"错误，请切换到平衡模式。日记内容已自动脱敏后发送。</div>
+        </div>
+        <div class="sg"><label>📁 导入 JSON</label>
+          <button class="btn btn-s" onclick="document.getElementById('file-in').click()">选择文件</button>
+          <input type="file" id="file-in" class="file-input" accept=".json">
+        </div>
+        <div class="sg"><label>✏️ 自定义 System Prompt（在人设基础上追加）</label>
+          <textarea id="custom-sp" placeholder="可选，留空则使用默认人设"></textarea>
+        </div>
+        <div class="btns"><button class="btn btn-a" onclick="saveSettings()">保存设置</button></div>
+      </div>
+    </div>
+  </div>
+  <div id="sidebar-overlay" onclick="closeSidebar()"></div>
+  <div id="main">
+    <div id="topbar">
+      <button id="menu-btn">☰</button>
+      <span id="top-name">Miya Assistant</span>
+      <span id="top-emotion"></span>
+      <div class="dot idle" id="status-dot"></div>
+    </div>
+    <div class="topic-bar" id="topic-bar" style="display:none;">
+      <span>💬</span>
+      <span id="topics"></span>
+    </div>
+    <div id="chat">
+      <div class="empty" id="welcome">
+        <div class="icon">🌸</div>
+        <h3>Miya Assistant - Unlimited</h3>
+        <p>无 Token 限制 · AI 深度理解 · 全量记忆 · 实时分析</p>
+      </div>
+    </div>
+    <div id="input-area">
+      <div class="input-row">
+        <textarea id="msg-input" placeholder="输入消息..." rows="1"></textarea>
+        <button id="send-btn">➤</button>
+        <button id="stop-btn">■</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="diary-modal" class="modal" style="display:none;">
+  <div class="modal-body">
+    <button class="modal-x" onclick="closeModal('diary-modal')">&times;</button>
+    <h3 id="dm-date"></h3>
+    <div class="content" id="dm-content"></div>
+  </div>
+</div>
+
+<div id="mem-modal" class="modal" style="display:none;">
+  <div class="modal-body">
+    <button class="modal-x" onclick="closeModal('mem-modal')">&times;</button>
+    <h3>编辑记忆关联</h3>
+    <div id="mm-content" style="margin-bottom:12px;font-size:14px;color:var(--accent);"></div>
+    <div id="mm-list" style="max-height:400px;overflow-y:auto;"></div>
+    <div class="btns" style="margin-top:12px;"><button class="btn btn-a" onclick="saveLinks()">保存</button></div>
+  </div>
+</div>
+
+<div id="analysis-modal" class="modal" style="display:none;">
+  <div class="modal-body">
+    <button class="modal-x" onclick="closeModal('analysis-modal')">&times;</button>
+    <h3>🔬 深度分析报告</h3>
+    <div id="analysis-content" class="content"></div>
+  </div>
+</div>
+
+<div id="token-info">Tokens: ~0</div>
+
+<script>
+// ===== State =====
+const S = {
+  diary: [], memories: [], prompts: {},
+  settings: {
+    apiUrl: 'https://api.deepseek.com/v1', apiKey: '', model: 'deepseek-chat',
+    temperature: 0.9, ctxDepth: 'full', customSP: ''
+  },
+  gameData: null,
+  chat: [],          // {role, content, ts}
+  affection: 0, trust: 50,
+  busy: false, recalled: false,
+  // Enhanced
+  emotion: { cur: '中性', intensity: .5, history: [] },
+  topics: [],
+  summary: '',       // rolling conversation summary
+  turns: 0,
+  relationship: {    // dynamic relationship model
+    stage: '初始', tension: 0, lastEvent: '',
+    userWants: [], charWants: [], conflicts: []
+  },
+  convArc: { phase: '开端', beats: [] },  // conversation arc tracking
+  tokenEstimate: 0
+};
+
+const EM = {
+  happy:{e:'😊',l:'开心',c:'#fbbf24'}, love:{e:'💕',l:'爱意',c:'#ec4899'},
+  shy:{e:'😳',l:'害羞',c:'#f472b6'}, excited:{e:'✨',l:'兴奋',c:'#fbbf24'},
+  sad:{e:'😢',l:'难过',c:'#60a5fa'}, angry:{e:'😤',l:'生气',c:'#ef4444'},
+  jealous:{e:'😾',l:'吃醋',c:'#ef4444'}, neutral:{e:'😐',l:'平静',c:'#9ca3af'},
+  anxious:{e:'😰',l:'不安',c:'#60a5fa'}, mischievous:{e:'😈',l:'调皮',c:'#a78bfa'},
+  tender:{e:'🥺',l:'温柔',c:'#ec4899'}
+};
+
+// ===== Init =====
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar').classList.add('collapsed');
+  document.getElementById('sidebar-overlay').classList.remove('show');
+}
+
+function init() { loadStorage(); setupUI(); renderAll(); setupMobileKeyboard(); }
+
+function setupMobileKeyboard() {
+  if (!('visualViewport' in window)) return;
+  window.visualViewport.addEventListener('resize', () => {
+    document.getElementById('app').style.height = window.visualViewport.height + 'px';
+  });
+}
+
+function loadStorage() {
+  try {
+    const d = localStorage.getItem('miya_u');
+    if (d) {
+      const p = JSON.parse(d);
+      Object.assign(S, p);
+      // restore UI
+      document.getElementById('api-url').value = S.settings.apiUrl||'';
+      document.getElementById('api-key').value = S.settings.apiKey||'';
+      document.getElementById('model-sel').value = S.settings.model||'deepseek-chat';
+      document.getElementById('temp').value = S.settings.temperature??0.9;
+      document.getElementById('tv').textContent = S.settings.temperature??0.9;
+      document.getElementById('ctx-depth').value = S.settings.ctxDepth||'full';
+      document.getElementById('custom-sp').value = S.settings.customSP||'';
+      if (S.settings.model==='custom') document.getElementById('model-custom').style.display='block';
+    }
+  } catch(e){}
+}
+function saveStorage() { try { localStorage.setItem('miya_u', JSON.stringify(S)); } catch(e){} }
+
+// ===== UI Setup =====
+function setupUI() {
+  document.querySelectorAll('.sb-tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.sb-tab').forEach(x=>x.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
+      t.classList.add('active');
+      document.getElementById('panel-'+t.dataset.tab).classList.add('active');
+    });
+  });
+  document.getElementById('menu-btn').addEventListener('click', () => {
+    const sb=document.getElementById('sidebar');
+    const ov=document.getElementById('sidebar-overlay');
+    if (innerWidth<=768) {
+      sb.classList.toggle('open');
+      ov.classList.toggle('show');
+    } else {
+      sb.classList.toggle('collapsed');
+    }
+  });
+  document.getElementById('close-sidebar').addEventListener('click', closeSidebar);
+  document.getElementById('send-btn').addEventListener('click', send);
+  document.getElementById('stop-btn').addEventListener('click', stopGeneration);
+  const inp = document.getElementById('msg-input');
+  inp.addEventListener('keydown', e => { if (e.key==='Enter'&&!e.shiftKey) { e.preventDefault(); send(); } });
+  inp.addEventListener('input', () => { inp.style.height='auto'; inp.style.height=Math.min(inp.scrollHeight,120)+'px'; });
+  document.getElementById('file-in').addEventListener('change', handleImport);
+  document.getElementById('model-sel').addEventListener('change', e => {
+    document.getElementById('model-custom').style.display = e.target.value==='custom'?'block':'none';
+  });
+  document.getElementById('temp').addEventListener('input', e => { document.getElementById('tv').textContent=e.target.value; });
+  document.getElementById('diary-search').addEventListener('input', e => renderDiary(e.target.value));
+  document.getElementById('mem-filter').addEventListener('change', renderMemory);
+  ['diary-modal','mem-modal','analysis-modal'].forEach(id => {
+    document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) closeModal(id); });
+  });
+}
+
+// ===== Import =====
+function handleImport(e) {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = ev => { try { importData(JSON.parse(ev.target.result)); showToast('✅ 导入成功！'); } catch(er) { showToast('❌ '+er.message); } };
+  r.readAsText(f); e.target.value='';
+}
+
+function importData(raw) {
+  try {
+    const d = raw.data || raw;
+    if (!d || typeof d !== 'object') throw new Error('文件格式不正确');
+
+    // Diary
+    if (d.diary && Array.isArray(d.diary) && d.diary.length) {
+      S.diary = d.diary.filter(x => x && typeof x === 'object').map(x => ({
+        ts: x.timestamp || x.ts || new Date().toISOString(),
+        date: x.date || '',
+        time: x.time || '',
+        aff: x.affection || x.aff || 0,
+        content: x.content || '',
+        mode: x.mode || '',
+        id: x.diaryId || x.id || crypto.randomUUID(),
+        len: x.conversationLength || x.len || 0
+      }));
+    }
+
+    // Prompts (character cards)
+    if (d.prompts && typeof d.prompts === 'object') S.prompts = d.prompts;
+
+    // Game data
+    if (d.gameData && typeof d.gameData === 'object') {
+      S.gameData = d.gameData;
+      S.affection = d.gameData.characterStats?.affection ?? 0;
+      S.trust = d.gameData.characterStats?.trust ?? 50;
+    }
+
+    // Memories
+    if (d.memories && Array.isArray(d.memories)) S.memories = d.memories.filter(m => m && m.content);
+
+    // Other state
+    if (d.emotionState && typeof d.emotionState === 'object') S.emotion = d.emotionState;
+    if (d.topics && Array.isArray(d.topics)) S.topics = d.topics;
+    if (typeof d.summary === 'string') S.summary = d.summary;
+    if (d.relationship && typeof d.relationship === 'object') S.relationship = d.relationship;
+    if (d.convArc && typeof d.convArc === 'object') S.convArc = d.convArc;
+
+    // Extract memories from diary if none exist
+    if (!S.memories.length && S.diary.length) {
+      extractInitialMemories().catch(e => {
+        console.error('Memory extraction failed:', e);
+        fallbackExtract();
+        renderMemory();
+        saveStorage();
+      });
+    }
+
+    saveStorage();
+    renderAll();
+  } catch(e) {
+    console.error('Import error:', e);
+    showToast('❌ 导入失败: ' + e.message);
+  }
+}
+
+// ===== Initial Memory Extraction (AI-powered) =====
+async function extractInitialMemories() {
+  // Feed all diary to AI for batch extraction
+  const diaryText = sanitizeDiaryForAPI(S.diary).map((d,i) => `[${i}] ${d.date} ${d.time} | ❤️${d.aff} | ${d.mode}\n${d.content.slice(0,200)}`).join('\n\n');
+
+  const prompt = `你是一个记忆分析专家。阅读以下全部日记，提取所有值得记住的关键事件。
+
+要求：
+1. 每个事件一句话概括（不超过40字）
+2. 标注类别：开端 / 亲密 / 情感 / 晶片 / 日常 / 转折 / 高潮
+3. 标注情绪：happy/love/shy/excited/sad/angry/jealous/neutral/anxious/mischievous/tender
+4. 标注重要度 1-5
+5. 标注日记索引号
+6. 如果事件之间有关联，在"关联"字段中标注相关事件的索引号
+
+输出JSON数组格式：
+[{"content":"...","category":"...","emotion":"...","importance":3,"diaryIdx":5,"links":[2,8]}]
+
+日记数据：
+${diaryText}`;
+
+  try {
+    showToast('🧠 AI 正在分析全部日记（已脱敏处理）...');
+    const resp = await callAPI([
+      { role:'system', content:'你是记忆分析专家。只输出JSON数组，不要其他任何内容。' },
+      { role:'user', content: prompt }
+    ]);
+    let result = '';
+    for await (const c of streamResp(resp)) result += c;
+
+    const match = result.match(/\[[\s\S]*\]/);
+    if (match) {
+      const items = JSON.parse(match[0]);
+      const now = new Date();
+      const mems = items.map(it => ({
+        id: crypto.randomUUID(),
+        content: it.content,
+        ts: S.diary[it.diaryIdx]?.ts || now.toISOString(),
+        date: S.diary[it.diaryIdx]?.date || '',
+        tags: ['AI提取', it.category],
+        links: [],  // will resolve after all created
+        srcDiaryId: S.diary[it.diaryIdx]?.id || null,
+        importance: it.importance || 2,
+        category: it.category || '日常',
+        emotion: it.emotion || 'neutral',
+        _linkIdxs: it.links || []
+      }));
+
+      // Resolve links
+      mems.forEach((m,i) => {
+        m._linkIdxs.forEach(li => {
+          if (mems[li]) {
+            const linked = mems[li];
+            if (!m.links.includes(linked.id)) m.links.push(linked.id);
+            if (!linked.links.includes(m.id)) linked.links.push(m.id);
+          }
+        });
+        delete m._linkIdxs;
+      });
+
+      S.memories = mems;
+      renderMemory();
+      showToast(`✅ 提取了 ${mems.length} 条记忆`);
+    }
+  } catch(e) {
+    console.error('Initial memory extraction failed:', e);
+    // Fallback to simple extraction
+    fallbackExtract();
+  }
+}
+
+function fallbackExtract() {
+  if (!S.diary || !S.diary.length) return;
+  const markers = ['第一次','最','突然','发现','重要','植入','融合','爱上','告白'];
+  S.diary.forEach(d => {
+    if (!d || !d.content) return;
+    try {
+      if (markers.some(m => d.content.includes(m)) || ['Opening','Special','Event'].includes(d.mode) || (d.aff||0) > 60) {
+        const sent = d.content.split(/[。\n]/).find(s => s.trim().length > 10) || d.content.slice(0,60);
+        if (sent && !S.memories.some(m => m.content === sent.trim())) {
+          S.memories.push({
+            id: crypto.randomUUID(), content: sent.trim().slice(0,100),
+            ts: d.ts, date: d.date, tags: ['自动'], links: [],
+            srcDiaryId: d.id, importance: 2, category: d.mode||'日记', emotion: 'neutral'
+          });
+        }
+      }
+    } catch(e) { /* skip bad entry */ }
+  });
+}
+
+// ===== API =====
+async function callAPI(messages) {
+  const url = S.settings.apiUrl.replace(/\/$/,'')+'/chat/completions';
+  const model = S.settings.model==='custom' ? document.getElementById('model-custom').value : S.settings.model;
+  let temp = S.settings.temperature;
+  if (S.settings.apiUrl.includes('xiaomimimo')) temp = Math.min(temp, 1.5);
+  S.abortController = new AbortController();
+  const resp = await fetch(url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.settings.apiKey},
+    body: JSON.stringify({ model, messages, temperature: temp, stream: true }),
+    signal: S.abortController.signal
+  });
+  if (!resp.ok) {
+    const errText = await resp.text();
+    if (resp.status === 400 || resp.status === 403 || resp.status === 422) {
+      const errLower = errText.toLowerCase();
+      if (errLower.includes('safety') || errLower.includes('content_policy') ||
+          errLower.includes('content filter') || errLower.includes('prohibited') ||
+          errLower.includes('policy') || errLower.includes('moderation') ||
+          errLower.includes('risk') || errLower.includes('违规') || errLower.includes('高风险')) {
+        throw new Error('内容安全检查未通过。这通常是因为对话历史中包含了敏感内容。\n💡 建议：1) 尝试开启"设置→Context深度→平衡模式"减少日记注入量；2) 清空对话后重新开始；3) 更换一个内容审查较宽松的 API 地址。');
+      }
+    }
+    throw new Error(`API ${resp.status}: ${errText}`);
+  }
+  S.tokenEstimate += messages.reduce((s,m) => s + m.content.length, 0) / 2; // rough
+  document.getElementById('token-info').textContent = `Tokens: ~${Math.round(S.tokenEstimate/1000)}k`;
+  return resp;
+}
+
+async function* streamResp(resp) {
+  const reader = resp.body.getReader(), dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, {stream:true});
+    const lines = buf.split('\n'); buf = lines.pop()||'';
+    for (const l of lines) {
+      const t = l.trim();
+      if (!t.startsWith('data: ')) continue;
+      const d = t.slice(6);
+      if (d==='[DONE]') return;
+      try { const c = JSON.parse(d).choices?.[0]?.delta?.content; if (c) yield c; } catch(e){}
+    }
+  }
+}
+
+async function callAI(prompt, system='你是一个智能助手。') {
+  const resp = await callAPI([{role:'system',content:system},{role:'user',content:prompt}]);
+  let out = '';
+  for await (const c of streamResp(resp)) out += c;
+  return out.trim();
+}
+
+// ===== Content Sanitization (for API calls) =====
+// Masks explicit content to avoid content filter blocks while preserving meaning
+function sanitizeForAPI(text) {
+  if (!text) return text;
+  const explicitPatterns = [
+    /小穴/g, /阴部/g, /阴茎/g, /阴道/g, /性交/g, /做爱/g, /自慰/g, /色情/g,
+    /淫/g, /奶子/g, /胸部/g, /裸体/g, /私处/g, /性奴/g, /调教/g, /高潮/g,
+    /插入/g, /射精/g, /口交/g, /肛交/g, /阴道内/g, /子宫/g, /阴蒂/g,
+    /orgasm/gi, /masturbat/gi, /intercourse/gi, /pornograph/gi,
+    /sex(ual|ually)?\b/gi, /nude/gi, /naked/gi, /erotic/gi,
+  ];
+  let result = text;
+  for (const p of explicitPatterns) {
+    result = result.replace(p, '████');
+  }
+  if (result.length > 300) result = result.slice(0, 300) + '...';
+  return result;
+}
+
+function sanitizeDiaryForAPI(entries) {
+  return entries.map(d => ({
+    ...d,
+    content: sanitizeForAPI(d.content)
+  }));
+}
+
+// ===== Thinking indicator =====
+function addThinkingBox() {
+  const c = document.getElementById('chat');
+  const d = document.createElement('div');
+  d.className = 'thinking-box';
+  d.id = 'thinking-box';
+  d.innerHTML = `<div class="tb-step active"><span class="spinner"></span> <span>🔍 理解你的意图...</span></div>`;
+  const firstMsg = c.querySelector('.msg');
+  if (firstMsg) c.insertBefore(d, firstMsg);
+  else c.appendChild(d);
+  c.scrollTop = c.scrollHeight;
+  return d;
+}
+
+function updateThinkingStep(box, stepIdx, steps) {
+  if (!box) return;
+  let html = '';
+  steps.forEach((label, i) => {
+    let cls, icon;
+    if (i < stepIdx) { cls = 'done'; icon = '<span class="check">✓</span>'; }
+    else if (i === stepIdx) { cls = 'active'; icon = '<span class="spinner"></span>'; }
+    else { cls = ''; icon = '<span style="color:var(--txt3)">○</span>'; }
+    html += `<div class="tb-step ${cls}">${icon} <span>${label}</span></div>`;
+  });
+  box.innerHTML = html;
+  document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+}
+
+function removeThinkingBox() {
+  const box = document.getElementById('thinking-box');
+  if (box) {
+    box.style.opacity = '0';
+    box.style.transition = 'opacity .3s';
+    setTimeout(() => box.remove(), 300);
+  }
+}
+
+// ===== Build Context =====
+function buildSystemPrompt() {
+  let cp = null;
+  const keys = Object.keys(S.prompts);
+  if (keys.length) {
+    const affMap = {'sister-null':0,'sister-verylow':10,'sister-low':30,'sister-medium':60,'sister-high':80};
+    const sorted = keys.filter(k=>affMap[k]!=null).sort((a,b)=>affMap[a]-affMap[b]);
+    let best = keys[0];
+    for (const k of sorted) { if (S.affection>=affMap[k]) best=k; }
+    if (!S.prompts[best]) best = keys.find(k=>k.includes('null'))||keys[0];
+    cp = S.prompts[best]?.data;
+  }
+
+  let sp = '';
+  if (cp) {
+    sp = `你是角色"${cp.name}"。\n`;
+    if (cp.description) sp += cp.description+'\n';
+    if (cp.personality) sp += `性格: ${cp.personality}\n`;
+    if (cp.scenario) sp += `场景: ${cp.scenario}\n`;
+    if (cp.creator_notes) sp += `注意: ${cp.creator_notes}\n`;
+  } else {
+    sp = '你是一个有个性的AI角色，以第一人称回复，保持角色一致性。\n';
+  }
+
+  // Inject dynamic state
+  const em = EM[S.emotion.cur]||EM.neutral;
+  sp += `\n【当前状态】\n`;
+  sp += `- 情绪: ${em.e} ${em.l}（${Math.round(S.emotion.intensity*100)}%）\n`;
+  sp += `- 好感度: ${S.affection}/1000 | 信任: ${S.trust}/100\n`;
+  sp += `- 关系阶段: ${S.relationship.stage}\n`;
+  if (S.topics.length) sp += `- 活跃话题: ${S.topics.join(', ')}\n`;
+  if (S.convArc.phase !== '开端') sp += `- 对话弧: ${S.convArc.phase}\n`;
+  if (S.relationship.tension > 0) sp += `- 紧张度: ${S.relationship.tension}/10\n`;
+
+  if (S.settings.customSP) sp += '\n'+S.settings.customSP+'\n';
+
+  return sp;
+}
+
+function buildFullContext() {
+  let ctx = '';
+
+  // All diary (or subset based on depth)
+  const depth = S.settings.ctxDepth;
+  let diaryEntries;
+  if (depth === 'full') diaryEntries = S.diary;
+  else if (depth === 'deep') diaryEntries = S.diary.slice(-20);
+  else diaryEntries = S.diary.slice(-10);
+
+  if (diaryEntries.length) {
+    ctx += '═══ 日记 ═══\n';
+    diaryEntries.forEach((d,i) => {
+      ctx += `[#${i} ${d.date} ${d.time} | ❤️${d.aff} | ${d.mode}]\n${sanitizeForAPI(d.content)}\n\n`;
+    });
+  }
+
+  // All memories with links
+  if (S.memories.length) {
+    ctx += '═══ 记忆碎片 ═══\n';
+    S.memories.forEach((m,i) => {
+      const em = EM[m.emotion]||EM.neutral;
+      let line = `[#${i} ${em.e} ${m.category}|重要度${m.importance}] ${m.content}`;
+      if (m.links.length) {
+        const linked = m.links.map(lid => {
+          const li = S.memories.findIndex(x=>x.id===lid);
+          return li>=0 ? `#${li}` : '?';
+        });
+        line += ` [关联: ${linked.join(',')}]`;
+      }
+      ctx += line+'\n';
+    });
+  }
+
+  // Emotion history
+  if (S.emotion.history.length) {
+    ctx += '\n═══ 情绪轨迹 ═══\n';
+    S.emotion.history.slice(-10).forEach(h => {
+      const em = EM[h.emotion]||EM.neutral;
+      ctx += `${em.e} ${h.date}: ${h.emotion} - ${h.context||''}\n`;
+    });
+  }
+
+  // Relationship dynamics
+  ctx += '\n═══ 关系动态 ═══\n';
+  ctx += `阶段: ${S.relationship.stage}\n`;
+  if (S.relationship.userWants.length) ctx += `用户似乎想要: ${S.relationship.userWants.join(', ')}\n`;
+  if (S.relationship.charWants.length) ctx += `角色想要: ${S.relationship.charWants.join(', ')}\n`;
+  if (S.relationship.conflicts.length) ctx += `潜在冲突: ${S.relationship.conflicts.join(', ')}\n`;
+  if (S.relationship.lastEvent) ctx += `最近重大事件: ${S.relationship.lastEvent}\n`;
+
+  // Rolling summary
+  if (S.summary) ctx += `\n═══ 对话摘要 ═══\n${S.summary}\n`;
+
+  ctx += '\n请基于以上全部记忆和状态进行回复。自然引用日记和记忆中的内容，体现情感连续性和角色成长。禁止凭空捏造未记录的事件。';
+
+  return ctx;
+}
+
+// ===== Pre-analysis (runs before each reply) =====
+async function preAnalyze(userMsg) {
+  const analysisPrompt = `你是对话分析引擎。分析以下用户消息，结合角色的所有记忆和状态，输出JSON。
+
+用户消息: "${userMsg}"
+
+当前状态:
+- 好感度: ${S.affection}
+- 信任: ${S.trust}
+- 情绪: ${S.emotion.cur}
+- 关系阶段: ${S.relationship.stage}
+- 活跃话题: ${S.topics.join(', ')}
+
+最近5条记忆:
+${S.memories.slice(-5).map((m,i)=>`${i}. ${m.content}`).join('\n')}
+
+分析并输出JSON:
+{
+  "relevantMemoryIdxs": [相关记忆的索引号数组],
+  "relevantDiaryIdxs": [相关日记的索引号数组],
+  "inferredIntent": "用户真正想要什么",
+  "emotionShift": "happy/love/shy/excited/sad/angry/jealous/neutral/anxious/mischievous/tender",
+  "emotionIntensity": 0-1的数字,
+  "newTopics": ["新出现的话题"],
+  "relationshipImpact": "此对话对关系的影响描述",
+  "tensionChange": -5到+5的整数,
+  "suggestedArc": "对此对话弧的判断：开端/发展/高潮/回落/尾声",
+  "subtext": "用户没说出口的潜台词是什么"
+}`;
+
+  try {
+    const resp = await callAPI([
+      { role:'system', content:'你是分析引擎。只输出JSON，不要任何其他文字。格式必须是合法JSON。' },
+      { role:'user', content: analysisPrompt }
+    ]);
+    let result = '';
+    for await (const c of streamResp(resp)) result += c;
+
+    const match = result.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+  } catch(e) { console.error('Pre-analyze failed:', e); }
+  return null;
+}
+
+function applyAnalysis(analysis) {
+  if (!analysis) return;
+
+  // Relevant memories
+  if (analysis.relevantMemoryIdxs?.length) {
+    // Mark as active (will be prioritized in context)
+    S._activeMems = analysis.relevantMemoryIdxs
+      .filter(i => i < S.memories.length)
+      .map(i => S.memories[i].id);
+  }
+
+  // Relevant diary
+  if (analysis.relevantDiaryIdxs?.length) {
+    S._activeDiary = analysis.relevantDiaryIdxs
+      .filter(i => i < S.diary.length)
+      .map(i => S.diary[i].id);
+  }
+
+  // Topics
+  if (analysis.newTopics?.length) {
+    analysis.newTopics.forEach(t => {
+      if (!S.topics.includes(t)) S.topics.push(t);
+    });
+    if (S.topics.length > 6) S.topics = S.topics.slice(-6);
+    updateTopicBar();
+  }
+
+  // Emotion
+  if (analysis.emotionShift && EM[analysis.emotionShift]) {
+    S.emotion.cur = analysis.emotionShift;
+    S.emotion.intensity = Math.min(1, Math.max(0, analysis.emotionIntensity || 0.5));
+  }
+
+  // Tension
+  if (analysis.tensionChange) {
+    S.relationship.tension = Math.max(0, Math.min(10, S.relationship.tension + analysis.tensionChange));
+  }
+
+  // Arc
+  if (analysis.suggestedArc) {
+    S.convArc.phase = analysis.suggestedArc;
+    S.convArc.beats.push({ phase: analysis.suggestedArc, ts: Date.now() });
+  }
+
+  // Relationship
+  if (analysis.relationshipImpact) {
+    S.relationship.lastEvent = analysis.relationshipImpact;
+  }
+  if (analysis.inferredIntent && !S.relationship.userWants.includes(analysis.inferredIntent)) {
+    S.relationship.userWants.push(analysis.inferredIntent);
+    if (S.relationship.userWants.length > 5) S.relationship.userWants = S.relationship.userWants.slice(-5);
+  }
+
+  // Store analysis for display
+  S._lastAnalysis = analysis;
+}
+
+// ===== Post-analysis (runs after each reply) =====
+async function postAnalyze(userMsg, aiReply) {
+  const postPrompt = `分析以下对话回合，更新角色状态。输出JSON。
+
+用户: "${userMsg}"
+角色回复: "${aiReply.slice(0, 500)}"
+
+当前好感: ${S.affection}  信任: ${S.trust}
+
+输出JSON:
+{
+  "diaryEntry": "如果值得记录，写一段第一人称日记（50-80字）。不值得则null",
+  "memoryContent": "如果此对话值得记住，一句话概括（30字内）。不值得则null",
+  "memoryCategory": "亲密/情感/日常/转折/高潮/晶片",
+  "memoryEmotion": "情绪标签",
+  "memoryImportance": 1-5,
+  "affectionChange": -10到+10的整数,
+  "trustChange": -5到+5的整数,
+  "emotionState": "角色当前情绪",
+  "emotionIntensity": 0-1,
+  "relationshipStage": "关系的新阶段描述",
+  "charWants": "角色想要什么",
+  "convSummary": "用一句话更新对话摘要"
+}`;
+
+  try {
+    const resp = await callAPI([
+      { role:'system', content:'你是状态管理器。只输出JSON，不要其他内容。' },
+      { role:'user', content: postPrompt }
+    ]);
+    let result = '';
+    for await (const c of streamResp(resp)) result += c;
+
+    const match = result.match(/\{[\s\S]*\}/);
+    if (match) {
+      const r = JSON.parse(match[0]);
+      applyPostAnalysis(r, userMsg, aiReply);
+      return r;
+    }
+  } catch(e) { console.error('Post-analyze failed:', e); }
+  return null;
+}
+
+function applyPostAnalysis(r) {
+  if (!r) return;
+
+  // Diary
+  if (r.diaryEntry) {
+    const now = new Date();
+    S.diary.push({
+      ts: now.toISOString(),
+      date: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`,
+      time: `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`,
+      aff: S.affection,
+      content: r.diaryEntry,
+      mode: 'Chat',
+      id: crypto.randomUUID(),
+      len: S.chat.length
+    });
+  }
+
+  // Memory
+  if (r.memoryContent) {
+    if (!S.memories.some(m => m.content === r.memoryContent)) {
+      const now = new Date();
+      const newMem = {
+        id: crypto.randomUUID(),
+        content: r.memoryContent,
+        ts: now.toISOString(),
+        date: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`,
+        tags: ['AI提取'], links: [],
+        srcDiaryId: null,
+        importance: r.memoryImportance || 2,
+        category: r.memoryCategory || '对话',
+        emotion: r.memoryEmotion || 'neutral'
+      };
+
+      // Auto-link with existing memories (AI-suggested)
+      autoLinkMemory(newMem);
+
+      S.memories.push(newMem);
+    }
+  }
+
+  // Affection/trust
+  if (r.affectionChange) S.affection = Math.max(0, Math.min(1000, S.affection + r.affectionChange));
+  if (r.trustChange) S.trust = Math.max(0, Math.min(100, S.trust + r.trustChange));
+
+  // Emotion
+  if (r.emotionState && EM[r.emotionState]) {
+    const now = new Date();
+    S.emotion.cur = r.emotionState;
+    S.emotion.intensity = r.emotionIntensity ?? 0.5;
+    S.emotion.history.push({
+      emotion: r.emotionState,
+      intensity: r.emotionIntensity,
+      date: `${now.getMonth()+1}/${now.getDate()}`,
+      context: r.convSummary || '',
+      ts: Date.now()
+    });
+    if (S.emotion.history.length > 30) S.emotion.history = S.emotion.history.slice(-30);
+  }
+
+  // Relationship
+  if (r.relationshipStage) S.relationship.stage = r.relationshipStage;
+  if (r.charWants && !S.relationship.charWants.includes(r.charWants)) {
+    S.relationship.charWants.push(r.charWants);
+    if (S.relationship.charWants.length > 5) S.relationship.charWants = S.relationship.charWants.slice(-5);
+  }
+
+  // Summary
+  if (r.convSummary) S.summary = r.convSummary;
+}
+
+function autoLinkMemory(newMem) {
+  // Use content similarity + same category + same emotion
+  const words = new Set(newMem.content.split(/[，。、？！\s]/).filter(w => w.length >= 2));
+
+  S.memories.forEach(m => {
+    let score = 0;
+    const otherWords = new Set(m.content.split(/[，。、？！\s]/).filter(w => w.length >= 2));
+    words.forEach(w => { if (otherWords.has(w)) score += 2; });
+    if (newMem.category === m.category) score += 2;
+    if (newMem.emotion === m.emotion) score += 1;
+
+    if (score >= 3) {
+      if (!newMem.links.includes(m.id)) newMem.links.push(m.id);
+      if (!m.links.includes(newMem.id)) m.links.push(newMem.id);
+    }
+  });
+}
+
+// ===== Stop =====
+function stopGeneration() {
+  if (S.abortController) {
+    S.abortController.abort();
+  }
+}
+
+// ===== Send =====
+async function send() {
+  const inp = document.getElementById('msg-input');
+  const text = inp.value.trim();
+  if (!text || S.busy) return;
+  if (!S.settings.apiKey) { showToast('❌ 请先配置 API Key'); return; }
+
+  S.busy = true;
+  document.getElementById('send-btn').style.display = 'none';
+  document.getElementById('stop-btn').style.display = 'flex';
+  document.getElementById('status-dot').className = 'dot thinking';
+  inp.value = ''; inp.style.height = 'auto';
+
+  const w = document.getElementById('welcome');
+  if (w) w.remove();
+
+  addMsg('user', text);
+  S.chat.push({role:'user', content:text, ts:Date.now()});
+  S.turns++;
+
+  // Show thinking indicator
+  const thinkSteps = ['🔍 理解你的意图', '📖 回忆相关日记', '💭 联想记忆碎片', '🎭 分析情感变化', '✍️ 组织回复'];
+  const thinkBox = addThinkingBox();
+
+  let typing = null;
+  try {
+  // Step 1: Pre-analysis
+  let stepIdx = 0;
+  if (S.turns <= 2 || S.turns % 2 === 0) {
+    updateThinkingStep(thinkBox, stepIdx, thinkSteps);
+    const analysis = await preAnalyze(text);
+    applyAnalysis(analysis);
+
+    // Show analysis in chat
+    if (analysis) showAnalysisBox(analysis);
+  }
+  stepIdx = 1;
+
+  // Step 2: Recall (first time)
+  if (!S.recalled && (S.diary.length || S.memories.length)) {
+    showRecall(text);
+    S.recalled = true;
+  }
+
+  // Step 3: Generate reply
+  updateThinkingStep(thinkBox, stepIdx, thinkSteps);
+  typing = addTyping();
+    const sysPrompt = buildSystemPrompt();
+    const fullCtx = buildFullContext();
+    stepIdx = thinkSteps.length - 1;
+    updateThinkingStep(thinkBox, stepIdx, thinkSteps);
+
+    const messages = [
+      { role:'system', content: sysPrompt + '\n\n' + fullCtx }
+    ];
+
+    // Add active memory highlights if any
+    if (S._activeMems?.length) {
+      let hCtx = '【本轮对话直接相关的记忆】\n';
+      S._activeMems.forEach(id => {
+        const m = S.memories.find(x=>x.id===id);
+        if (m) hCtx += `• ${m.content} (${m.date})\n`;
+      });
+      messages.push({role:'system', content:hCtx});
+    }
+
+    // Chat history
+    if (S.summary && S.chat.length > 12) {
+      messages.push({role:'system', content:`对话摘要: ${S.summary}`});
+      S.chat.slice(-12).forEach(m => messages.push({role:m.role, content:m.content}));
+    } else {
+      S.chat.slice(-30).forEach(m => messages.push({role:m.role, content:m.content}));
+    }
+
+    const resp = await callAPI(messages);
+    typing.remove();
+    const el = addMsg('ai','',true);
+    let full = '';
+    for await (const c of streamResp(resp)) { full += c; updMsg(el,full); }
+    el.querySelector('.bubble').textContent = full;
+    S.chat.push({role:'assistant', content:full, ts:Date.now()});
+
+    // Step 4: Post-analysis
+    removeThinkingBox();
+    showToast('📝 记录中...');
+    await postAnalyze(text, full);
+
+    // Update UI
+    updateEmotionUI();
+    updateCharCard();
+    renderDiary();
+    renderMemory();
+    renderRelPanel();
+    saveStorage();
+
+    // Clear active
+    delete S._activeMems;
+    delete S._activeDiary;
+
+  } catch(e) {
+    if (typing) typing.remove();
+    removeThinkingBox();
+    if (e.name === 'AbortError') {
+      addMsg('ai', '⏹️ 已终止生成');
+    } else {
+      addMsg('ai', `⚠️ ${e.message}`);
+    }
+  } finally {
+    S.busy = false;
+    S.abortController = null;
+    document.getElementById('send-btn').style.display = 'flex';
+    document.getElementById('stop-btn').style.display = 'none';
+    document.getElementById('status-dot').className = 'dot idle';
+  }
+}
+
+// ===== UI: Messages =====
+function addMsg(role, content, streaming=false) {
+  const c = document.getElementById('chat');
+  const d = document.createElement('div');
+  d.className = `msg ${role}`;
+  const b = document.createElement('div');
+  b.className = 'bubble';
+  b.textContent = content;
+  const m = document.createElement('div');
+  m.className = 'meta';
+  const now = new Date();
+  m.textContent = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  d.appendChild(b); d.appendChild(m);
+  c.appendChild(d);
+  c.scrollTop = c.scrollHeight;
+  return d;
+}
+
+function updMsg(el, content) {
+  el.querySelector('.bubble').textContent = content;
+  document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+}
+
+function addTyping() {
+  const c = document.getElementById('chat');
+  const d = document.createElement('div');
+  d.className = 'msg ai';
+  d.innerHTML = '<div class="typing"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>';
+  c.appendChild(d); c.scrollTop = c.scrollHeight;
+  return d;
+}
+
+// ===== Analysis box in chat =====
+function showAnalysisBox(analysis) {
+  const c = document.getElementById('chat');
+  const d = document.createElement('div');
+  d.className = 'analysis-box';
+
+  let tags = '';
+  if (analysis.emotionShift) {
+    const em = EM[analysis.emotionShift];
+    if (em) tags += `<span class="ab-tag ab-tag-emotion">${em.e} ${em.l}</span>`;
+  }
+  (analysis.newTopics||[]).forEach(t => { tags += `<span class="ab-tag ab-tag-topic">${t}</span>`; });
+  if (analysis.subtext) tags += `<span class="ab-tag ab-tag-relation">💬 ${analysis.subtext.slice(0,30)}</span>`;
+  (analysis.relevantMemoryIdxs||[]).slice(0,3).forEach(i => {
+    if (S.memories[i]) tags += `<span class="ab-tag ab-tag-memory">💭 ${S.memories[i].content.slice(0,20)}</span>`;
+  });
+
+  d.innerHTML = `
+    <div class="ab-title"><span>🔍</span> AI 分析</div>
+    ${analysis.inferredIntent ? `<div class="ab-row">意图: ${analysis.inferredIntent}</div>` : ''}
+    ${analysis.relationshipImpact ? `<div class="ab-row">关系影响: ${analysis.relationshipImpact}</div>` : ''}
+    ${analysis.suggestedArc ? `<div class="ab-row">对话弧: ${analysis.suggestedArc}</div>` : ''}
+    <div class="ab-tags">${tags}</div>
+  `;
+
+  c.appendChild(d);
+}
+
+// ===== Recall overlay =====
+function showRecall(userMsg) {
+  const c = document.getElementById('chat');
+  const d = document.createElement('div');
+  d.className = 'recall-box';
+
+  let html = '';
+
+  // Recent diary (AI-selected relevant)
+  const relevantDiary = S._activeDiary?.length
+    ? S.diary.filter(d => S._activeDiary.includes(d.id))
+    : S.diary.slice(-5);
+
+  if (relevantDiary.length) {
+    html += '<div class="recall-section"><div class="recall-title diary">📖 回忆日记</div>';
+    relevantDiary.forEach(d => {
+      html += `<div class="recall-item"><span class="dt">${d.date}</span> ${d.content.slice(0, 80)}...</div>`;
+    });
+    html += '</div>';
+  }
+
+  // Active memories
+  const activeMems = S._activeMems?.length
+    ? S.memories.filter(m => S._activeMems.includes(m.id))
+    : S.memories.slice(-5);
+
+  if (activeMems.length) {
+    html += '<div class="recall-section"><div class="recall-title memory">💭 联想记忆</div>';
+    activeMems.forEach(m => {
+      const em = EM[m.emotion]||EM.neutral;
+      html += `<div class="recall-item">${em.e} ${m.content}</div>`;
+    });
+    html += '</div>';
+  }
+
+  // Emotion
+  const em = EM[S.emotion.cur]||EM.neutral;
+  html += `<div class="recall-section"><div class="recall-title emotion">${em.e} 当前情绪</div>`;
+  html += `<div class="recall-item">${em.l}（${Math.round(S.emotion.intensity*100)}%）</div></div>`;
+
+  // Arc
+  if (S.convArc.phase !== '开端') {
+    html += `<div class="recall-section"><div class="recall-title arc">📈 对话弧</div>`;
+    html += `<div class="recall-item">${S.convArc.phase} | 紧张度: ${S.relationship.tension}/10</div></div>`;
+  }
+
+  d.innerHTML = html;
+  // Insert before first message
+  const firstMsg = c.querySelector('.msg');
+  if (firstMsg) c.insertBefore(d, firstMsg);
+  else c.appendChild(d);
+
+  setTimeout(() => {
+    d.style.opacity='0'; d.style.transition='opacity .6s';
+    setTimeout(()=>d.remove(), 600);
+  }, 5000);
+}
+
+// ===== UI: Panels =====
+function updateEmotionUI() {
+  const em = EM[S.emotion.cur]||EM.neutral;
+  document.getElementById('cc-emotion').innerHTML = `情绪: ${em.e} ${em.l}`;
+  document.getElementById('top-emotion').innerHTML = `${em.e} ${em.l}`;
+  document.getElementById('top-emotion').style.color = em.c;
+}
+
+function updateCharCard() {
+  if (!S.gameData) return;
+  document.getElementById('cc-name').textContent = S.gameData.playerInfo?.name||'Miya';
+  document.getElementById('cc-sub').textContent = `${S.gameData.playerInfo?.identity||''} · ${S.gameData.gender||''}`;
+  document.getElementById('top-name').textContent = S.gameData.playerInfo?.name||'Miya';
+  document.getElementById('bar-aff').style.width = Math.min(S.affection/10,100)+'%';
+  document.getElementById('v-aff').textContent = S.affection;
+  document.getElementById('bar-trust').style.width = S.trust+'%';
+  document.getElementById('v-trust').textContent = S.trust;
+  document.getElementById('cc-topics').innerHTML = S.topics.length ? '话题: '+S.topics.join(', ') : '';
+  document.getElementById('cc-arc').textContent = `弧: ${S.convArc.phase} | 紧张: ${S.relationship.tension}/10 | 阶段: ${S.relationship.stage}`;
+}
+
+function updateTopicBar() {
+  const bar = document.getElementById('topic-bar');
+  const span = document.getElementById('topics');
+  if (S.topics.length) { bar.style.display='flex'; span.innerHTML = S.topics.map(t=>`<span class="topic-pill">${t}</span>`).join(''); }
+  else bar.style.display='none';
+}
+
+function renderAll() {
+  updateCharCard(); updateEmotionUI(); updateTopicBar();
+  renderDiary(); renderMemory(); renderRelPanel();
+  if (S.chat.length) {
+    const w = document.getElementById('welcome');
+    if (w) w.remove();
+    S.chat.forEach(m => addMsg(m.role, m.content));
+  }
+}
+
+function renderDiary(search='') {
+  document.getElementById('diary-n').textContent = S.diary.length;
+  const list = document.getElementById('diary-list');
+  if (!S.diary.length) { list.innerHTML='<div class="empty"><p>还没有日记</p></div>'; return; }
+  let entries = [...S.diary].reverse();
+  if (search) entries = entries.filter(d => d.content.includes(search)||d.date.includes(search));
+  list.innerHTML = entries.slice(0,100).map(d => `
+    <div class="diary-entry" onclick="showDiaryDetail('${d.id}')">
+      <div class="de-date"><span>📅 ${d.date} ${d.time}</span><span>❤️${d.aff}</span><span>${d.mode}</span></div>
+      <div class="de-preview">${d.content.slice(0,120)}...</div>
+    </div>`).join('');
+}
+
+function renderMemory() {
+  const filter = document.getElementById('mem-filter').value;
+  document.getElementById('mem-n').textContent = S.memories.length;
+  const list = document.getElementById('mem-list');
+  if (!S.memories.length) { list.innerHTML='<div class="empty"><p>还没有记忆</p></div>'; return; }
+
+  let entries = [...S.memories].reverse();
+  if (filter==='auto') entries = entries.filter(m=>m.tags.includes('AI提取'));
+  else if (filter==='manual') entries = entries.filter(m=>m.tags.includes('手动添加'));
+  else if (filter==='linked') entries = entries.filter(m=>m.links.length>0);
+
+  const catC = {'亲密':'#ec4899','情感':'#ef4444','晶片':'#7c3aed','日常':'#6b7280','开端':'#4ade80','转折':'#fbbf24','高潮':'#f97316','对话':'#60a5fa','手动':'#9ca3af'};
+
+  list.innerHTML = entries.slice(0,60).map(m => {
+    const em = EM[m.emotion]||EM.neutral;
+    const links = S.memories.filter(x=>m.links.includes(x.id));
+    const linkH = links.map(l=>`<span class="mem-link" onclick="hlMem('${l.id}')">${l.content.slice(0,20)}...</span>`).join('');
+    const imp = (m.importance||0)>=4 ? '⭐' : '';
+    return `<div class="mem-item" id="mem-${m.id}" style="border-left-color:${catC[m.category]||'#7c3aed'}">
+      <div class="mi-content">${em.e} ${m.content}</div>
+      <div class="mi-meta">
+        <span>${m.date}</span>
+        <span style="background:${catC[m.category]||'#7c3aed'};color:white;padding:1px 6px;border-radius:8px;font-size:10px;">${m.category}</span>
+        ${imp}
+        <button class="btn btn-s btn-sm" onclick="event.stopPropagation();editLinks('${m.id}')" style="margin-left:auto;">🔗</button>
+      </div>
+      ${linkH?`<div class="mem-links">${linkH}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+function renderRelPanel() {
+  // Dynamics
+  const dyn = document.getElementById('rel-dynamics');
+  let dhtml = '';
+  dhtml += `<div style="font-size:13px;margin-bottom:8px;"><b>阶段:</b> ${S.relationship.stage}</div>`;
+  dhtml += `<div style="font-size:12px;color:var(--txt2);margin-bottom:4px;">紧张度: ${'🔴'.repeat(Math.min(5,Math.round(S.relationship.tension/2)))}${'⚪'.repeat(5-Math.min(5,Math.round(S.relationship.tension/2)))} (${S.relationship.tension}/10)</div>`;
+  if (S.relationship.userWants.length) dhtml += `<div style="font-size:12px;color:var(--txt2);margin-top:6px;">你想要: ${S.relationship.userWants.map(w=>`<span style="background:rgba(233,69,96,.15);color:var(--accent);padding:1px 6px;border-radius:8px;font-size:10px;">${w}</span>`).join(' ')}</div>`;
+  if (S.relationship.charWants.length) dhtml += `<div style="font-size:12px;color:var(--txt2);margin-top:4px;">她想要: ${S.relationship.charWants.map(w=>`<span style="background:rgba(236,72,153,.15);color:#f472b6;padding:1px 6px;border-radius:8px;font-size:10px;">${w}</span>`).join(' ')}</div>`;
+  if (S.relationship.lastEvent) dhtml += `<div style="font-size:12px;color:var(--txt2);margin-top:6px;">最近: ${S.relationship.lastEvent}</div>`;
+  dyn.innerHTML = dhtml;
+
+  // Timeline
+  const tl = document.getElementById('rel-timeline');
+  const events = [];
+  S.diary.forEach(d => {
+    if (['Opening','Special','Event'].includes(d.mode) || d.aff > 50 || d.content.includes('第一次'))
+      events.push({ date:d.date, ts:d.ts, type:'diary', text:d.content.slice(0,70), aff:d.aff });
+  });
+  S.memories.filter(m => (m.importance||0) >= 3).forEach(m => {
+    events.push({ date:m.date, ts:m.ts, type:'memory', text:m.content, cat:m.category });
+  });
+  events.sort((a,b) => new Date(a.ts)-new Date(b.ts));
+
+  if (!events.length) { tl.innerHTML='<div class="empty"><p>导入日记后自动生成</p></div>'; return; }
+  tl.innerHTML = events.slice(-25).map(ev => `
+    <div style="display:flex;gap:10px;margin-bottom:12px;">
+      <div style="width:10px;height:10px;border-radius:50%;background:${ev.type==='diary'?'var(--accent)':'var(--purple)'};margin-top:4px;flex-shrink:0;"></div>
+      <div style="flex:1;">
+        <div style="font-size:10px;color:var(--txt3);margin-bottom:2px;">${ev.type==='diary'?'📖':'💭'} ${ev.date} ${ev.aff?'❤️'+ev.aff:''}</div>
+        <div style="font-size:12px;color:var(--txt2);line-height:1.4;">${ev.text}</div>
+      </div>
+    </div>`).join('');
+}
+
+// ===== Diary Detail =====
+function showDiaryDetail(id) {
+  const d = S.diary.find(x=>x.id===id);
+  if (!d) return;
+  document.getElementById('dm-date').textContent = `📅 ${d.date} ${d.time} | ❤️${d.aff} | ${d.mode}`;
+  document.getElementById('dm-content').textContent = d.content;
+  document.getElementById('diary-modal').style.display = 'flex';
+}
+function closeModal(id) { document.getElementById(id).style.display='none'; }
+
+// ===== Memory Links =====
+let editId = null;
+function hlMem(id) {
+  // Open sidebar
+  const sb=document.getElementById('sidebar');
+  const ov=document.getElementById('sidebar-overlay');
+  sb.classList.remove('collapsed');
+  if (innerWidth<=768) { sb.classList.add('open'); ov.classList.add('show'); }
+
+  document.querySelectorAll('.sb-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelector('[data-tab="mem"]').classList.add('active');
+  document.getElementById('panel-memory').classList.add('active');
+  setTimeout(()=>{ const el=document.getElementById('mem-'+id); if(el){el.scrollIntoView({behavior:'smooth',block:'center'});el.style.boxShadow='0 0 0 2px var(--accent)';setTimeout(()=>el.style.boxShadow='',2000);} },100);
+}
+
+function editLinks(mid) {
+  const mem = S.memories.find(m=>m.id===mid);
+  if (!mem) return;
+  editId = mid;
+  document.getElementById('mm-content').textContent = mem.content;
+  const others = S.memories.filter(m=>m.id!==mid);
+  document.getElementById('mm-list').innerHTML = others.map(m => {
+    const em = EM[m.emotion]||EM.neutral;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">
+      <input type="checkbox" data-mid="${m.id}" ${mem.links.includes(m.id)?'checked':''} style="accent-color:var(--accent);">
+      <span style="font-size:12px;flex:1;">${em.e} ${m.content.slice(0,40)}</span>
+      <span style="font-size:10px;color:var(--txt3);">${m.date}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('mem-modal').style.display='flex';
+}
+
+function saveLinks() {
+  const mem = S.memories.find(m=>m.id===editId);
+  if (!mem) return;
+  const checked = document.querySelectorAll('#mm-list input:checked');
+  mem.links = Array.from(checked).map(cb=>cb.dataset.mid);
+  S.memories.forEach(m => {
+    if (m.id===mem.id) return;
+    m.links = m.links.filter(id=>id!==mem.id);
+    if (mem.links.includes(m.id)) m.links.push(mem.id);
+  });
+  closeModal('mem-modal'); saveStorage(); renderMemory(); showToast('✅ 关联已更新');
+}
+
+function addMemoryManual() {
+  const c = prompt('输入记忆:');
+  if (!c?.trim()) return;
+  const now = new Date();
+  S.memories.push({
+    id:crypto.randomUUID(), content:c.trim(), ts:now.toISOString(),
+    date:`${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`,
+    tags:['手动添加'], links:[], srcDiaryId:null, importance:2, category:'手动', emotion:'neutral'
+  });
+  saveStorage(); renderMemory(); showToast('✅ 已添加');
+}
+
+function forceRecall() { if (!S.diary.length&&!S.memories.length){showToast('暂无内容');return;} showRecall(''); showToast('🧠 已触发'); }
+
+// ===== Deep Analyze =====
+async function deepAnalyze() {
+  if (S.busy) return;
+  if (!S.settings.apiKey) { showToast('❌ 请先配置 API Key'); return; }
+  if (!S.diary.length && !S.memories.length) { showToast('暂无数据'); return; }
+
+  S.busy = true;
+  document.getElementById('status-dot').className = 'dot thinking';
+  showToast('🔬 深度分析中...');
+
+  const diaryText = S.diary.map(d => `[${d.date} ${d.time} | ❤️${d.aff}] ${d.content.slice(0,150)}`).join('\n');
+  const memText = S.memories.map(m => `[${m.category} | ${m.emotion} | 重要${m.importance}] ${m.content}`).join('\n');
+
+  const prompt = `你是一个关系心理学分析专家。基于以下全部数据，生成一份深度关系分析报告。
+
+日记（${S.diary.length}条）:
+${diaryText.slice(0, 5000)}
+
+记忆碎片（${S.memories.length}条）:
+${memText.slice(0, 3000)}
+
+当前状态:
+- 好感: ${S.affection}/1000
+- 信任: ${S.trust}/100
+- 关系阶段: ${S.relationship.stage}
+- 情绪: ${S.emotion.cur}
+
+请输出以下分析（中文）:
+
+1.【关系发展脉络】概述从相识到现在的关键阶段变化
+2.【情感模式分析】角色的情感表达模式、依恋类型
+3.【深层需求洞察】双方没有说出口的需求
+4.【关系健康度评估】优势和潜在风险
+5.【未来走向预测】基于现有趋势的关系发展方向
+6.【记忆图谱】哪些记忆是核心节点，它们之间如何关联
+7.【建议】如何推进关系`;
+
+  try {
+    const resp = await callAPI([
+      { role:'system', content:'你是关系心理学分析专家，输出详细的中文分析报告。' },
+      { role:'user', content: prompt }
+    ]);
+    let result = '';
+    for await (const c of streamResp(resp)) result += c;
+
+    document.getElementById('analysis-content').textContent = result;
+    document.getElementById('analysis-modal').style.display = 'flex';
+  } catch(e) {
+    showToast('❌ 分析失败: '+e.message);
+  }
+
+  S.busy = false;
+  document.getElementById('status-dot').className = 'dot idle';
+}
+
+// ===== Settings =====
+function saveSettings() {
+  S.settings.apiUrl = document.getElementById('api-url').value;
+  S.settings.apiKey = document.getElementById('api-key').value;
+  S.settings.model = document.getElementById('model-sel').value;
+  if (S.settings.model==='custom') S.settings.model = document.getElementById('model-custom').value;
+  S.settings.temperature = parseFloat(document.getElementById('temp').value);
+  S.settings.ctxDepth = document.getElementById('ctx-depth').value;
+  S.settings.customSP = document.getElementById('custom-sp').value;
+  saveStorage(); showToast('✅ 已保存');
+}
+
+function exportData() {
+  const obj = { version:'3.0.0', ts:Date.now(), exportDate:new Date().toISOString(),
+    data: { diary:S.diary, memories:S.memories, prompts:S.prompts, gameData:S.gameData,
+      settings:S.settings, chatHistory:S.chat, emotionState:S.emotion,
+      topics:S.topics, summary:S.summary, relationship:S.relationship, convArc:S.convArc }};
+  const blob = new Blob([JSON.stringify(obj,null,2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `miya_v3_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+  a.click();
+}
+
+function clearChat() {
+  if (!confirm('确定清空对话？')) return;
+  S.chat=[]; S.recalled=false; S.turns=0; S.topics=[]; S.summary='';
+  S.convArc={phase:'开端',beats:[]}; S.relationship.tension=0;
+  document.getElementById('chat').innerHTML='<div class="empty" id="welcome"><div class="icon">🌸</div><h3>对话已清空</h3></div>';
+  saveStorage(); updateTopicBar(); showToast('✅ 已清空');
+}
+
+function showToast(msg) {
+  const old = document.querySelector('.toast');
+  if (old) old.remove();
+  const t = document.createElement('div');
+  t.className='toast'; t.textContent=msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(), 2500);
+}
+
+init();
+</script>
+</body>
+</html>
