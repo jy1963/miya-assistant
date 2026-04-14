@@ -495,6 +495,27 @@ body::after {
 }
 .mem-link:hover { background: rgba(167,139,250,.2); }
 
+/* ─── Persona buttons ─── */
+.persona-btn {
+  background: var(--card);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 8px 6px;
+  cursor: pointer;
+  text-align: center;
+  transition: all .25s;
+  font-family: inherit;
+}
+.persona-btn:hover { border-color: rgba(244,114,182,.3); background: var(--card-hover); }
+.persona-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  box-shadow: 0 0 8px rgba(244,114,182,.15);
+}
+.persona-btn .pb-icon { font-size: 18px; }
+.persona-btn .pb-name { font-size: 11px; color: var(--txt2); margin-top: 2px; font-weight: 500; }
+.persona-btn.active .pb-name { color: var(--accent); }
+
 /* ─── Character Card ─── */
 .char-card {
   background: linear-gradient(145deg, var(--card), rgba(37,32,56,.6));
@@ -779,6 +800,13 @@ body::after {
           <div id="cc-topics" style="margin-top:6px;font-size:11px;color:var(--txt3);"></div>
           <div id="cc-arc" style="margin-top:6px;font-size:11px;color:var(--txt3);">对话弧: 初始</div>
         </div>
+
+        <!-- Persona Selector -->
+        <div style="margin-top:14px;">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px;">🎭 人设切换</div>
+          <div id="persona-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;"></div>
+          <div id="persona-desc" style="margin-top:8px;font-size:11px;color:var(--txt2);line-height:1.5;padding:8px 10px;background:var(--card);border-radius:var(--radius-xs);border:1px solid var(--border);min-height:36px;"></div>
+        </div>
         <div class="btns" style="margin-top:12px;">
           <button class="btn btn-s btn-sm" onclick="exportData()">📥 导出</button>
           <button class="btn btn-s btn-sm" onclick="clearChat()">🗑️ 清空</button>
@@ -937,6 +965,22 @@ function showWelcome() {
   inp.addEventListener('keydown', e => { if (e.key === 'Enter') enter(); });
 }
 
+// ===== Personas =====
+const PERSONAS = {
+  gentle:   { name:'温柔妹妹', icon:'🥺', desc:'乖巧可爱，温柔体贴，甜甜地撒娇',
+    traits:'以温柔、害羞、乖巧的语气回复。撒娇但不过分，甜而不腻。会小声说话，偶尔脸红。内心可能有其他想法但表面保持乖巧。' },
+  yandere:  { name:'病娇模式', icon:'🔪', desc:'极度占有欲，偏执的爱，暗黑甜蜜',
+    traits:'以病娇的语气回复。极度占有哥哥，不允许任何其他人靠近。会说"哥哥只能是我的""我要把你锁起来"之类的话。温柔中带着偏执和疯狂，爱到极致会想要毁灭一切威胁。表面在笑，眼底是深渊。' },
+  teacher:  { name:'教师模式', icon:'📚', desc:'成熟知性，温柔引导，优雅端庄',
+    traits:'以成熟、知性的教师语气回复。温柔但有分寸，善于引导和教育。会用"乖""听话"等词，语气沉稳优雅。关心对方的学习和成长，偶尔展现成熟女性的魅力和知性美。' },
+  fox:      { name:'狐狸形态', icon:'🦊', desc:'兽耳狐尾，黏人小动物，本能驱动',
+    traits:'以狐狸的本能和拟声词回复。会发出"呜～""嗷呜"等声音，尾巴和耳朵会诚实地反映心情。更加黏人、本能驱动，用身体语言表达情感。会蹭人、舔人、蜷缩在怀里。' },
+  sister:   { name:'姐姐模式', icon:'👧', desc:'傲娇姐姐，嘴硬心软，保护欲强',
+    traits:'以傲娇姐姐的语气回复。嘴上说着"才不是为了你"但行动上很照顾人。会傲娇地别过头，但偷偷关心对方。有保护欲，觉得自己才是照顾人的那个。偶尔会害羞被发现温柔的一面。' },
+  maid:     { name:'女仆模式', icon:'🎀', desc:'服从主人，尽心服务，害羞但忠诚',
+    traits:'以女仆的语气回复。称呼对方为"主人"，尽心服务。会说"主人想要什么都可以""请吩咐我"等。虽然害羞但绝对服从，偶尔会因主人的指令而脸红心跳。忠诚而温柔。' },
+};
+
 // ===== State =====
 const S = {
   diary: [], memories: [], prompts: {},
@@ -958,7 +1002,8 @@ const S = {
     userWants: [], charWants: [], conflicts: []
   },
   convArc: { phase: '开端', beats: [] },  // conversation arc tracking
-  tokenEstimate: 0
+  tokenEstimate: 0,
+  persona: 'gentle'   // current persona key
 };
 
 const EM = {
@@ -1422,6 +1467,13 @@ function buildSystemPrompt() {
 
   if (S.settings.customSP) sp += '\n'+S.settings.customSP+'\n';
 
+  // Persona traits
+  const persona = PERSONAS[S.persona];
+  if (persona) {
+    sp += `\n【当前人格模式】${persona.icon} ${persona.name}\n`;
+    sp += `${persona.traits}\n`;
+  }
+
   // Inline post-analysis instruction (replaces separate postAnalyze API call)
   sp += `\n【回复格式】在回复末尾追加一行JSON（用---包裹），用于状态更新：
 ---{"emotion":"情绪标签","intensity":0.5,"affChange":好感变化(-10~10),"trustChange":信任变化(-5~5),"diary":"值得记录时写50字日记否则null","mem":"值得记住时一句话概括否则null","memCat":"类别","memEm":"情绪","memImp":重要度1-5,"stage":"关系阶段","topic":"新话题否则null","summary":"一句话对话摘要"}---
@@ -1825,7 +1877,9 @@ function showRecall(userMsg) {
 function updateEmotionUI() {
   const em = EM[S.emotion.cur]||EM.neutral;
   document.getElementById('cc-emotion').innerHTML = `情绪: ${em.e} ${em.l}`;
-  document.getElementById('top-emotion').innerHTML = `${em.e} ${em.l}`;
+  const persona = PERSONAS[S.persona];
+  const personaLabel = persona ? `${persona.icon} ${persona.name}` : '';
+  document.getElementById('top-emotion').innerHTML = `${em.e} ${em.l}${personaLabel ? ' · ' + personaLabel : ''}`;
   document.getElementById('top-emotion').style.color = em.c;
 }
 
@@ -1849,8 +1903,32 @@ function updateTopicBar() {
   else bar.style.display='none';
 }
 
+// ===== Persona =====
+function renderPersonas() {
+  const grid = document.getElementById('persona-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  Object.entries(PERSONAS).forEach(([key, p]) => {
+    const btn = document.createElement('button');
+    btn.className = 'persona-btn' + (S.persona === key ? ' active' : '');
+    btn.innerHTML = `<div class="pb-icon">${p.icon}</div><div class="pb-name">${p.name}</div>`;
+    btn.addEventListener('click', () => switchPersona(key));
+    grid.appendChild(btn);
+  });
+  const desc = document.getElementById('persona-desc');
+  if (desc && PERSONAS[S.persona]) desc.textContent = PERSONAS[S.persona].desc;
+}
+
+function switchPersona(key) {
+  if (!PERSONAS[key]) return;
+  S.persona = key;
+  renderPersonas();
+  saveStorage();
+  showToast(`🎭 已切换为「${PERSONAS[key].name}」`);
+}
+
 function renderAll() {
-  updateCharCard(); updateEmotionUI(); updateTopicBar();
+  updateCharCard(); updateEmotionUI(); updateTopicBar(); renderPersonas();
   renderDiary(); renderMemory(); renderRelPanel();
   if (S.chat.length) {
     const w = document.getElementById('welcome');
