@@ -46,19 +46,17 @@
 
 * { margin:0; padding:0; box-sizing:border-box; }
 
+html { height: -webkit-fill-available; }
 body {
   font-family: 'Outfit','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;
   background: var(--bg);
   color: var(--txt);
-  height: 100dvh;
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   -webkit-font-smoothing: antialiased;
-  position: fixed;
-  width: 100%;
-  top: 0;
-  left: 0;
 }
 
 /* Ambient background glow */
@@ -90,7 +88,7 @@ body::after {
 ::-webkit-scrollbar-thumb { background: rgba(160,155,178,.15); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(160,155,178,.25); }
 
-#app { display:flex; height:100vh; position:relative; z-index:1; }
+#app { display:flex; height:100vh; height:100dvh; position:relative; z-index:1; }
 
 /* ─── Sidebar ─── */
 #sidebar {
@@ -685,15 +683,23 @@ body::after {
 @media(max-width:768px) {
   #sidebar {
     position:fixed; left:0; top:0; bottom:0; width:300px;
-    margin-left:-300px; z-index:300; pointer-events:none;
-    transition:margin-left .35s cubic-bezier(.4,0,.2,1);
-    -webkit-overflow-scrolling:touch;
-    overflow-y:auto;
+    transform:translateX(-100%); z-index:400;
+    transition:transform .35s cubic-bezier(.4,0,.2,1);
+    -webkit-overflow-scrolling:touch; overflow-y:auto;
+    box-shadow:none;
   }
-  #sidebar.open { margin-left:0; pointer-events:auto; }
-  #sidebar.collapsed { margin-left:-300px; pointer-events:none; }
-  #sidebar-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:299; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
-  #sidebar-overlay.show { display:block; }
+  #sidebar.mobile-open {
+    transform:translateX(0);
+    box-shadow:4px 0 30px rgba(0,0,0,.5);
+  }
+  /* Remove desktop collapsed class effect on mobile */
+  #sidebar.collapsed { margin-left:0; }
+  #sidebar-overlay {
+    display:none; position:fixed; inset:0;
+    background:rgba(0,0,0,.6); z-index:350;
+    backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+  }
+  #sidebar-overlay.visible { display:block; }
   #menu-btn { padding:8px 12px; min-width:44px; min-height:44px; }
   .sb-tab { padding:12px 0; font-size:12px; }
   .bubble { max-width:85%; }
@@ -703,7 +709,7 @@ body::after {
   #end-btn { min-width:48px; min-height:48px; }
   #input-area { position:sticky; bottom:0; }
   #chat { padding:14px; }
-  /* Ensure settings inputs are accessible on mobile */
+  /* Ensure settings inputs are accessible on mobile (16px prevents iOS zoom) */
   .sg input, .sg select, .sg textarea { font-size:16px; }
 }
 }
@@ -747,7 +753,7 @@ body::after {
     .ws-card .ws-input {
       width: 100%; background: var(--bg3); border: 1px solid var(--border);
       border-radius: 22px; padding: 12px 20px; color: var(--txt);
-      font-size: 15px; outline: none; font-family: inherit;
+      font-size: 16px; outline: none; font-family: inherit;
       text-align: center; transition: border-color .3s, box-shadow .3s;
       letter-spacing: .3px;
     }
@@ -779,6 +785,9 @@ body::after {
     <p>AI 角色扮演 · 全量记忆 · 深度分析<br>每位用户拥有独立的对话空间</p>
     <input type="text" class="ws-input" id="ws-username" placeholder="输入你的名字开始使用" maxlength="20" autocomplete="off">
     <button class="ws-btn" id="ws-enter">进入 →</button>
+    <div style="margin-top:8px;">
+      <button onclick="showCloudAuth()" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-family:inherit;padding:6px 12px;border-radius:16px;transition:all .2s;" onmouseover="this.style.background='var(--accent-dim)'" onmouseout="this.style.background='none'">☁️ 云端同步 / 已有账号登录</button>
+    </div>
     <div class="ws-hint">你的数据仅保存在本地浏览器中，不会上传到服务器</div>
   </div>
 </div>
@@ -1065,20 +1074,25 @@ const EM = {
 };
 
 // ===== Init =====
+function openSidebar() {
+  const sb = document.getElementById('sidebar');
+  const ov = document.getElementById('sidebar-overlay');
+  if (innerWidth <= 768) {
+    sb.classList.add('mobile-open');
+    ov.classList.add('visible');
+    document.body.style.overflow = 'hidden';
+  } else {
+    sb.classList.remove('collapsed');
+  }
+}
+
 function closeSidebar() {
   const sb = document.getElementById('sidebar');
   const ov = document.getElementById('sidebar-overlay');
-  sb.classList.remove('open');
-  ov.classList.remove('show');
-  // On mobile, ensure it goes back to hidden state
   if (innerWidth <= 768) {
-    sb.style.marginLeft = '-300px';
-    sb.style.pointerEvents = 'none';
-    // Reset inline styles after transition
-    setTimeout(() => {
-      sb.style.marginLeft = '';
-      sb.style.pointerEvents = '';
-    }, 400);
+    sb.classList.remove('mobile-open');
+    ov.classList.remove('visible');
+    document.body.style.overflow = '';
   } else {
     sb.classList.add('collapsed');
   }
@@ -1145,15 +1159,11 @@ function setupUI() {
   document.getElementById('menu-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     const sb=document.getElementById('sidebar');
-    const ov=document.getElementById('sidebar-overlay');
     if (innerWidth<=768) {
-      const isOpen = sb.classList.contains('open');
-      if (isOpen) {
+      if (sb.classList.contains('mobile-open')) {
         closeSidebar();
       } else {
-        sb.classList.remove('collapsed');
-        sb.classList.add('open');
-        ov.classList.add('show');
+        openSidebar();
       }
     } else {
       sb.classList.toggle('collapsed');
