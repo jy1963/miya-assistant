@@ -881,7 +881,7 @@ body::after {
 <div id="welcome-screen" style="display:none;">
   <style>
     #welcome-screen {
-      position: fixed; inset: 0; z-index: 9999;
+      position: fixed; inset: 0; z-index: 9998;
       background: var(--bg);
       display: flex; align-items: center; justify-content: center;
       flex-direction: column; gap: 24px;
@@ -1816,7 +1816,7 @@ function decodeSensitive(text) {
   return result;
 }
 
-// Legacy: kept for diary/memory context injection (now uses encodeSensitive)// Legacy: kept for diary/memory context injection (now uses encodeSensitive)
+// Legacy: kept for diary/memory context injection (now uses encodeSensitive)
 function sanitizeForAPI(text) {
   if (!text) return text;
   let result = encodeSensitive(text);
@@ -2565,7 +2565,7 @@ function hlMem(id) {
   const sb=document.getElementById('sidebar');
   const ov=document.getElementById('sidebar-overlay');
   sb.classList.remove('collapsed');
-  if (innerWidth<=768) { sb.classList.add('open'); ov.classList.add('show'); }
+  if (innerWidth<=768) { sb.classList.add('mobile-open'); ov.classList.add('visible'); }
 
   document.querySelectorAll('.sb-tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
