@@ -813,6 +813,7 @@ body::after {
           <button class="btn btn-s btn-sm" onclick="forceRecall()">🧠 回忆</button>
           <button class="btn btn-s btn-sm" onclick="deepAnalyze()">🔬 深度分析</button>
           <button class="btn btn-a btn-sm" onclick="endConversation()" id="end-conv-btn" style="display:none;">📋 结束对话</button>
+          <button class="btn btn-s btn-sm" onclick="showCloudAuth()">☁️ 云端同步</button>
         </div>
       </div>
 
@@ -886,6 +887,7 @@ body::after {
       <button id="menu-btn">☰</button>
       <span id="top-name">Miya Assistant</span>
       <span id="top-emotion"></span>
+      <button id="cloud-btn" onclick="showCloudAuth()" style="background:none;border:none;font-size:13px;cursor:pointer;padding:4px 10px;border-radius:var(--radius-xs);transition:all .2s;font-family:inherit;" title="云端同步">☁️ 云端</button>
       <div class="dot idle" id="status-dot"></div>
     </div>
     <div class="topic-bar" id="topic-bar" style="display:none;">
@@ -1061,7 +1063,7 @@ function closeSidebar() {
 
 function init() {
   loadStorage(); setupUI(); renderAll(); setupMobileKeyboard();
-  updateSendStatus();
+  updateSendStatus(); updateCloudUI();
   // Register Service Worker for offline support
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(()=>{});
@@ -1729,6 +1731,8 @@ async function send() {
     document.getElementById('stop-btn').style.display = 'none';
     document.getElementById('status-dot').className = 'dot idle';
     updateSendStatus();
+    // Auto cloud sync (fire & forget)
+    if (CloudSync.isLoggedIn()) CloudSync.upload().catch(()=>{});
   }
 }
 
@@ -2227,6 +2231,7 @@ function saveSettings() {
   S.settings.ctxDepth = document.getElementById('ctx-depth').value;
   S.settings.customSP = document.getElementById('custom-sp').value;
   saveStorage(); showToast('✅ 已保存'); updateSendStatus();
+  if (CloudSync.isLoggedIn()) CloudSync.upload().catch(()=>{});
 }
 
 function exportData() {
@@ -2339,6 +2344,7 @@ ${transcript.slice(0, 4000)}
   renderDiary();
   renderMemory();
   showToast('📋 对话已保存为日记');
+  if (CloudSync.isLoggedIn()) CloudSync.upload().catch(()=>{});
 }
 
 function showToast(msg) {
@@ -2348,6 +2354,372 @@ function showToast(msg) {
   t.className='toast'; t.textContent=msg;
   document.body.appendChild(t);
   setTimeout(()=>t.remove(), 2500);
+}
+
+// ============================================================
+// Cloud Sync via GitHub API
+// ============================================================
+const CloudSync = {
+  // ===== Config =====
+  OWNER: 'jy1963',
+  REPO: 'miya-assistant',
+  BRANCH: 'main',
+  _token: null,
+
+  getToken() {
+    if (this._token) return this._token;
+    this._token = localStorage.getItem('miya_cloud_token') || '';
+    return this._token;
+  },
+
+  setToken(t) { this._token = t; localStorage.setItem('miya_cloud_token', t); },
+
+  // ===== GitHub API helpers =====
+  async _gh(path, method='GET', body=null) {
+    const token = this.getToken();
+    const url = `https://api.github.com/repos/${this.OWNER}/${this.REPO}/contents/${path}`;
+    const opts = {
+      method,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      }
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const resp = await fetch(url + `?ref=${this.BRANCH}`, opts);
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`GitHub API ${resp.status}: ${err}`);
+    }
+    return resp.json();
+  },
+
+  async _readFile(path) {
+    try {
+      const data = await this._gh(path);
+      return { content: JSON.parse(atob(data.content)), sha: data.sha };
+    } catch(e) {
+      if (e.message.includes('404')) return null;
+      throw e;
+    }
+  },
+
+  async _writeFile(path, content, sha=null, msg='update') {
+    const body = {
+      message: msg,
+      content: btoa(unescape(encodeURIComponent(JSON.stringify(content, null, 2)))),
+      branch: this.BRANCH
+    };
+    if (sha) body.sha = sha;
+    return this._gh(path, 'PUT', body);
+  },
+
+  // ===== Password hashing (SHA-256) =====
+  async hashPassword(password) {
+    const enc = new TextEncoder();
+    const buf = await crypto.subtle.digest('SHA-256', enc.encode(password + 'miya_salt_2026'));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+  },
+
+  // ===== Registry (username → UID mapping) =====
+  async _getRegistry() {
+    const r = await this._readFile('users/registry.json');
+    return r || { content: {}, sha: null };
+  },
+
+  // ===== Registration =====
+  async register(username, password) {
+    // Validate
+    if (!username || username.length < 2) throw new Error('用户名至少2个字符');
+    if (!password || password.length < 4) throw new Error('密码至少4个字符');
+
+    // Check registry
+    const reg = await this._getRegistry();
+    if (reg.content[username]) throw new Error('用户名已被注册');
+
+    // Generate UID
+    const uid = username + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+    const hash = await this.hashPassword(password);
+
+    // Update registry
+    reg.content[username] = { uid, hash, created: new Date().toISOString() };
+    await this._writeFile('users/registry.json', reg.content, reg.sha, `register: ${username}`);
+
+    // Save locally
+    localStorage.setItem('miya_cloud_user', JSON.stringify({ username, uid, hash }));
+    localStorage.setItem('miya_uid', uid);
+
+    return { username, uid };
+  },
+
+  // ===== Login =====
+  async login(username, password) {
+    const reg = await this._getRegistry();
+    const user = reg.content[username];
+    if (!user) throw new Error('用户名不存在');
+
+    const hash = await this.hashPassword(password);
+    if (hash !== user.hash) throw new Error('密码错误');
+
+    localStorage.setItem('miya_cloud_user', JSON.stringify({ username, uid: user.uid, hash }));
+    localStorage.setItem('miya_uid', user.uid);
+    return { username, uid: user.uid };
+  },
+
+  // ===== Sync: Upload =====
+  async upload() {
+    const cloudUser = JSON.parse(localStorage.getItem('miya_cloud_user') || 'null');
+    if (!cloudUser) throw new Error('未登录');
+
+    const data = {
+      diary: S.diary, memories: S.memories, prompts: S.prompts,
+      gameData: S.gameData, settings: S.settings, chatHistory: S.chat,
+      emotionState: S.emotion, topics: S.topics, summary: S.summary,
+      relationship: S.relationship, convArc: S.convArc, persona: S.persona,
+      syncTime: new Date().toISOString()
+    };
+
+    const path = `users/${cloudUser.uid}.json`;
+    const existing = await this._readFile(path);
+    await this._writeFile(path, data, existing?.sha, `sync: ${cloudUser.username}`);
+    return true;
+  },
+
+  // ===== Sync: Download =====
+  async download() {
+    const cloudUser = JSON.parse(localStorage.getItem('miya_cloud_user') || 'null');
+    if (!cloudUser) throw new Error('未登录');
+
+    const path = `users/${cloudUser.uid}.json`;
+    const result = await this._readFile(path);
+    if (!result) return false; // No cloud data yet
+
+    const d = result.content;
+    if (d.diary) S.diary = d.diary;
+    if (d.memories) S.memories = d.memories;
+    if (d.prompts) {
+      S.prompts = d.prompts;
+      Object.entries(d.prompts).forEach(([key, val]) => {
+        if (val && typeof val === 'object') PERSONAS[key] = makePersonaFromPrompt(key, val);
+      });
+    }
+    if (d.gameData) { S.gameData = d.gameData; S.affection = d.gameData.characterStats?.affection ?? 0; S.trust = d.gameData.characterStats?.trust ?? 50; }
+    if (d.settings) S.settings = d.settings;
+    if (d.emotionState) S.emotion = d.emotionState;
+    if (d.topics) S.topics = d.topics;
+    if (d.summary) S.summary = d.summary;
+    if (d.relationship) S.relationship = d.relationship;
+    if (d.convArc) S.convArc = d.convArc;
+    if (d.persona) S.persona = d.persona;
+
+    // Restore UI
+    document.getElementById('api-url').value = S.settings.apiUrl||'';
+    document.getElementById('api-key').value = S.settings.apiKey||'';
+    document.getElementById('model-sel').value = S.settings.model||'deepseek-chat';
+    document.getElementById('temp').value = S.settings.temperature??0.9;
+    document.getElementById('tv').textContent = S.settings.temperature??0.9;
+    document.getElementById('ctx-depth').value = S.settings.ctxDepth||'full';
+    document.getElementById('custom-sp').value = S.settings.customSP||'';
+
+    saveStorage();
+    renderAll();
+    return true;
+  },
+
+  // ===== Check login state =====
+  isLoggedIn() {
+    return !!localStorage.getItem('miya_cloud_user');
+  },
+
+  getUsername() {
+    const u = JSON.parse(localStorage.getItem('miya_cloud_user') || 'null');
+    return u?.username || null;
+  },
+
+  logout() {
+    localStorage.removeItem('miya_cloud_user');
+    localStorage.removeItem('miya_uid');
+  }
+};
+
+// ===== Cloud Auth UI =====
+function showCloudAuth() {
+  // Create modal
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.id = 'cloud-auth-modal';
+  modal.innerHTML = `
+  <div class="modal-body" style="max-width:400px;">
+    <button class="modal-x" onclick="closeCloudAuth()">&times;</button>
+    <h3>☁️ 云端同步</h3>
+    <div id="ca-tabs" style="display:flex;gap:0;margin-bottom:18px;border-bottom:1px solid var(--border);">
+      <div class="ca-tab active" data-tab="login" onclick="switchCaTab('login')">登录</div>
+      <div class="ca-tab" data-tab="register" onclick="switchCaTab('register')">注册</div>
+    </div>
+    <style>
+      .ca-tab { flex:1; padding:10px; text-align:center; font-size:13px; font-weight:500; cursor:pointer; color:var(--txt3); border-bottom:2px solid transparent; transition:all .25s; }
+      .ca-tab:hover { color:var(--txt2); }
+      .ca-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+      .ca-form { display:none; }
+      .ca-form.active { display:block; }
+      .ca-input { width:100%; background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius-xs); padding:10px 14px; color:var(--txt); font-size:14px; outline:none; font-family:inherit; margin-bottom:10px; transition:border-color .3s; }
+      .ca-input:focus { border-color:var(--border-focus); }
+      .ca-btn { width:100%; padding:12px; border-radius:22px; border:none; background:linear-gradient(135deg,var(--accent),var(--accent2)); color:white; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit; margin-top:6px; transition:all .25s; }
+      .ca-btn:hover { transform:translateY(-1px); box-shadow:0 4px 16px rgba(244,114,182,.3); }
+      .ca-btn:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+      .ca-hint { font-size:11px; color:var(--txt3); text-align:center; margin-top:12px; line-height:1.5; }
+      .ca-error { font-size:12px; color:var(--red); text-align:center; margin-top:8px; min-height:18px; }
+      .ca-logged-in { text-align:center; padding:20px 0; }
+      .ca-logged-in .ca-user { font-size:18px; font-weight:600; color:var(--accent); margin-bottom:8px; }
+      .ca-logged-in .ca-uid { font-size:11px; color:var(--txt3); margin-bottom:16px; word-break:break-all; }
+      .ca-sync-btns { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
+    </style>
+
+    ${CloudSync.isLoggedIn() ? `
+    <div class="ca-logged-in">
+      <div class="ca-user">👤 ${CloudSync.getUsername()}</div>
+      <div class="ca-uid">UID: ${localStorage.getItem('miya_uid')||'?'}</div>
+      <div class="ca-sync-btns">
+        <button class="btn btn-a" onclick="doUpload()">⬆️ 上传数据</button>
+        <button class="btn btn-s" onclick="doDownload()">⬇️ 下载数据</button>
+      </div>
+      <div class="ca-hint" style="margin-top:14px;">
+        上传：将本地数据同步到云端<br>
+        下载：用云端数据覆盖本地
+      </div>
+      <button class="btn btn-s" style="margin-top:14px;" onclick="doLogout()">🚪 退出登录</button>
+    </div>
+    ` : `
+    <div class="ca-form active" id="form-login">
+      <div style="font-size:12px;color:var(--txt2);margin-bottom:10px;">🔑 GitHub Token（用于云端存储）</div>
+      <input class="ca-input" id="ca-token" placeholder="ghp_xxxx..." type="password" value="${localStorage.getItem('miya_cloud_token')||''}" style="margin-bottom:14px;">
+      <input class="ca-input" id="ca-login-user" placeholder="用户名" autocomplete="username">
+      <input class="ca-input" id="ca-login-pass" type="password" placeholder="密码" autocomplete="current-password">
+      <div class="ca-error" id="ca-login-err"></div>
+      <button class="ca-btn" id="ca-login-btn" onclick="doLogin()">登录</button>
+      <div class="ca-hint">需要一个有 repo 权限的 GitHub Personal Access Token</div>
+    </div>
+    <div class="ca-form" id="form-register">
+      <div style="font-size:12px;color:var(--txt2);margin-bottom:10px;">🔑 GitHub Token（用于云端存储）</div>
+      <input class="ca-input" id="ca-token-reg" placeholder="ghp_xxxx..." type="password" value="${localStorage.getItem('miya_cloud_token')||''}" style="margin-bottom:14px;">
+      <input class="ca-input" id="ca-reg-user" placeholder="用户名（唯一，用于识别身份）" autocomplete="username">
+      <input class="ca-input" id="ca-reg-pass" type="password" placeholder="密码（至少4位）" autocomplete="new-password">
+      <input class="ca-input" id="ca-reg-pass2" type="password" placeholder="确认密码" autocomplete="new-password">
+      <div class="ca-error" id="ca-reg-err"></div>
+      <button class="ca-btn" id="ca-reg-btn" onclick="doRegister()">注册</button>
+      <div class="ca-hint">注册后获得唯一云端空间</div>
+    </div>
+    `}
+  </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeCloudAuth(); });
+
+  // Enter key support
+  setTimeout(() => {
+    const li = document.getElementById('ca-login-pass');
+    if (li) li.addEventListener('keydown', e => { if (e.key==='Enter') doLogin(); });
+    const rp = document.getElementById('ca-reg-pass2');
+    if (rp) rp.addEventListener('keydown', e => { if (e.key==='Enter') doRegister(); });
+  }, 100);
+}
+
+function switchCaTab(tab) {
+  document.querySelectorAll('.ca-tab').forEach(t => t.classList.toggle('active', t.dataset.tab===tab));
+  document.getElementById('form-login').classList.toggle('active', tab==='login');
+  document.getElementById('form-register').classList.toggle('active', tab==='register');
+}
+
+function closeCloudAuth() {
+  const m = document.getElementById('cloud-auth-modal');
+  if (m) m.remove();
+}
+
+async function doLogin() {
+  const token = document.getElementById('ca-token').value.trim();
+  if (!token) { document.getElementById('ca-login-err').textContent = '请填写 GitHub Token'; return; }
+  CloudSync.setToken(token);
+  const user = document.getElementById('ca-login-user').value.trim();
+  const pass = document.getElementById('ca-login-pass').value;
+  const errEl = document.getElementById('ca-login-err');
+  const btn = document.getElementById('ca-login-btn');
+  if (!user || !pass) { errEl.textContent = '请填写用户名和密码'; return; }
+  btn.disabled = true; btn.textContent = '登录中...'; errEl.textContent = '';
+  try {
+    await CloudSync.login(user, pass);
+    showToast('✅ 登录成功');
+    closeCloudAuth();
+    updateCloudUI();
+    // Auto download on login
+    try {
+      await CloudSync.download();
+      showToast('☁️ 已从云端同步数据');
+    } catch(e) { /* first login may have no data */ }
+  } catch(e) {
+    errEl.textContent = e.message;
+    btn.disabled = false; btn.textContent = '登录';
+  }
+}
+
+async function doRegister() {
+  const token = document.getElementById('ca-token-reg').value.trim();
+  if (!token) { document.getElementById('ca-reg-err').textContent = '请填写 GitHub Token'; return; }
+  CloudSync.setToken(token);
+  const user = document.getElementById('ca-reg-user').value.trim();
+  const pass = document.getElementById('ca-reg-pass').value;
+  const pass2 = document.getElementById('ca-reg-pass2').value;
+  const errEl = document.getElementById('ca-reg-err');
+  const btn = document.getElementById('ca-reg-btn');
+  if (!user || !pass) { errEl.textContent = '请填写所有字段'; return; }
+  if (pass !== pass2) { errEl.textContent = '两次密码不一致'; return; }
+  btn.disabled = true; btn.textContent = '注册中...'; errEl.textContent = '';
+  try {
+    await CloudSync.register(user, pass);
+    showToast('✅ 注册成功，正在上传数据...');
+    try { await CloudSync.upload(); showToast('☁️ 数据已同步到云端'); } catch(e) {}
+    closeCloudAuth();
+    updateCloudUI();
+  } catch(e) {
+    errEl.textContent = e.message;
+    btn.disabled = false; btn.textContent = '注册';
+  }
+}
+
+async function doUpload() {
+  showToast('⬆️ 上传中...');
+  try {
+    await CloudSync.upload();
+    showToast('✅ 数据已同步到云端');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+async function doDownload() {
+  if (!confirm('下载将覆盖本地数据，确定？')) return;
+  showToast('⬇️ 下载中...');
+  try {
+    await CloudSync.download();
+    showToast('✅ 已从云端同步数据');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+function doLogout() {
+  if (!confirm('退出登录？本地数据不会删除。')) return;
+  CloudSync.logout();
+  closeCloudAuth();
+  updateCloudUI();
+  showToast('🚪 已退出');
+}
+
+function updateCloudUI() {
+  const btn = document.getElementById('cloud-btn');
+  if (!btn) return;
+  if (CloudSync.isLoggedIn()) {
+    btn.innerHTML = `☁️ ${CloudSync.getUsername()}`;
+    btn.style.color = 'var(--green)';
+  } else {
+    btn.innerHTML = '☁️ 云端';
+    btn.style.color = '';
+  }
 }
 </script>
 </body>
