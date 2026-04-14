@@ -804,7 +804,7 @@ body::after {
         <!-- Persona Selector -->
         <div style="margin-top:14px;">
           <div style="font-size:13px;font-weight:600;margin-bottom:8px;">🎭 人设切换</div>
-          <div id="persona-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;"></div>
+          <div id="persona-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;max-height:220px;overflow-y:auto;scrollbar-width:thin;"></div>
           <div id="persona-desc" style="margin-top:8px;font-size:11px;color:var(--txt2);line-height:1.5;padding:8px 10px;background:var(--card);border-radius:var(--radius-xs);border:1px solid var(--border);min-height:36px;"></div>
         </div>
         <div class="btns" style="margin-top:12px;">
@@ -968,18 +968,55 @@ function showWelcome() {
 // ===== Personas =====
 const PERSONAS = {
   gentle:   { name:'温柔妹妹', icon:'🥺', desc:'乖巧可爱，温柔体贴，甜甜地撒娇',
-    traits:'以温柔、害羞、乖巧的语气回复。撒娇但不过分，甜而不腻。会小声说话，偶尔脸红。内心可能有其他想法但表面保持乖巧。' },
+    traits:'以温柔、害羞、乖巧的语气回复。撒娇但不过分，甜而不腻。会小声说话，偶尔脸红。内心可能有其他想法但表面保持乖巧。',
+    isBuiltIn: true },
   yandere:  { name:'病娇模式', icon:'🔪', desc:'极度占有欲，偏执的爱，暗黑甜蜜',
-    traits:'以病娇的语气回复。极度占有哥哥，不允许任何其他人靠近。会说"哥哥只能是我的""我要把你锁起来"之类的话。温柔中带着偏执和疯狂，爱到极致会想要毁灭一切威胁。表面在笑，眼底是深渊。' },
+    traits:'以病娇的语气回复。极度占有哥哥，不允许任何其他人靠近。会说"哥哥只能是我的""我要把你锁起来"之类的话。温柔中带着偏执和疯狂，爱到极致会想要毁灭一切威胁。表面在笑，眼底是深渊。',
+    isBuiltIn: true },
   teacher:  { name:'教师模式', icon:'📚', desc:'成熟知性，温柔引导，优雅端庄',
-    traits:'以成熟、知性的教师语气回复。温柔但有分寸，善于引导和教育。会用"乖""听话"等词，语气沉稳优雅。关心对方的学习和成长，偶尔展现成熟女性的魅力和知性美。' },
+    traits:'以成熟、知性的教师语气回复。温柔但有分寸，善于引导和教育。会用"乖""听话"等词，语气沉稳优雅。关心对方的学习和成长，偶尔展现成熟女性的魅力和知性美。',
+    isBuiltIn: true },
   fox:      { name:'狐狸形态', icon:'🦊', desc:'兽耳狐尾，黏人小动物，本能驱动',
-    traits:'以狐狸的本能和拟声词回复。会发出"呜～""嗷呜"等声音，尾巴和耳朵会诚实地反映心情。更加黏人、本能驱动，用身体语言表达情感。会蹭人、舔人、蜷缩在怀里。' },
+    traits:'以狐狸的本能和拟声词回复。会发出"呜～""嗷呜"等声音，尾巴和耳朵会诚实地反映心情。更加黏人、本能驱动，用身体语言表达情感。会蹭人、舔人、蜷缩在怀里。',
+    isBuiltIn: true },
   sister:   { name:'姐姐模式', icon:'👧', desc:'傲娇姐姐，嘴硬心软，保护欲强',
-    traits:'以傲娇姐姐的语气回复。嘴上说着"才不是为了你"但行动上很照顾人。会傲娇地别过头，但偷偷关心对方。有保护欲，觉得自己才是照顾人的那个。偶尔会害羞被发现温柔的一面。' },
+    traits:'以傲娇姐姐的语气回复。嘴上说着"才不是为了你"但行动上很照顾人。会傲娇地别过头，但偷偷关心对方。有保护欲，觉得自己才是照顾人的那个。偶尔会害羞被发现温柔的一面。',
+    isBuiltIn: true },
   maid:     { name:'女仆模式', icon:'🎀', desc:'服从主人，尽心服务，害羞但忠诚',
-    traits:'以女仆的语气回复。称呼对方为"主人"，尽心服务。会说"主人想要什么都可以""请吩咐我"等。虽然害羞但绝对服从，偶尔会因主人的指令而脸红心跳。忠诚而温柔。' },
+    traits:'以女仆的语气回复。称呼对方为"主人"，尽心服务。会说"主人想要什么都可以""请吩咐我"等。虽然害羞但绝对服从，偶尔会因主人的指令而脸红心跳。忠诚而温柔。',
+    isBuiltIn: true },
 };
+
+// Prompt key → Chinese name + icon
+const PROMPT_NAME_MAP = {
+  'sister-null':          { name:'默认人格',   icon:'🌸' },
+  'sister-verylow':       { name:'冷漠疏离',   icon:'❄️' },
+  'sister-low':           { name:'羞涩试探',   icon:'😳' },
+  'sister-medium':        { name:'温柔依赖',   icon:'💕' },
+  'sister-high':          { name:'热情似火',   icon:'🔥' },
+  'sister-dilei':         { name:'地雷系',     icon:'💣' },
+  'sister-kindergarten':  { name:'幼化形态',   icon:'🧸' },
+  'sister-tutor':         { name:'家庭教师',   icon:'📖' },
+  'sister-kemonomimi':    { name:'兽耳娘',     icon:'🐾' },
+  'sister-kemonomimi-cat':{ name:'猫咪形态',   icon:'🐱' },
+};
+
+// Auto-generate persona from a prompt key+data
+function makePersonaFromPrompt(key, promptData) {
+  const meta = PROMPT_NAME_MAP[key] || { name: key, icon:'🎭' };
+  const d = promptData?.data || promptData || {};
+  const personality = d.personality || '';
+  // Extract short description from personality (first sentence, max 30 chars)
+  const shortDesc = personality.replace(/\n/g,' ').slice(0, 40) + (personality.length > 40 ? '…' : '');
+  return {
+    name: meta.name,
+    icon: meta.icon,
+    desc: shortDesc,
+    traits: personality,
+    promptKey: key,
+    isBuiltIn: false
+  };
+}
 
 // ===== State =====
 const S = {
@@ -1137,7 +1174,15 @@ function importData(raw) {
     }
 
     // Prompts (character cards)
-    if (d.prompts && typeof d.prompts === 'object') S.prompts = d.prompts;
+    if (d.prompts && typeof d.prompts === 'object') {
+      S.prompts = d.prompts;
+      // Auto-generate personas from imported prompts
+      Object.entries(d.prompts).forEach(([key, val]) => {
+        if (val && typeof val === 'object') {
+          PERSONAS[key] = makePersonaFromPrompt(key, val);
+        }
+      });
+    }
 
     // Game data
     if (d.gameData && typeof d.gameData === 'object') {
@@ -1435,14 +1480,22 @@ function truncateText(text, maxLen) {
 // ===== Build Context (optimized for speed) =====
 function buildSystemPrompt() {
   let cp = null;
-  const keys = Object.keys(S.prompts);
-  if (keys.length) {
-    const affMap = {'sister-null':0,'sister-verylow':10,'sister-low':30,'sister-medium':60,'sister-high':80};
-    const sorted = keys.filter(k=>affMap[k]!=null).sort((a,b)=>affMap[a]-affMap[b]);
-    let best = keys[0];
-    for (const k of sorted) { if (S.affection>=affMap[k]) best=k; }
-    if (!S.prompts[best]) best = keys.find(k=>k.includes('null'))||keys[0];
-    cp = S.prompts[best]?.data;
+  const persona = PERSONAS[S.persona];
+
+  // If current persona is an imported prompt, use its specific card
+  if (persona?.promptKey && S.prompts[persona.promptKey]) {
+    cp = S.prompts[persona.promptKey]?.data;
+  } else {
+    // Fallback: auto-select by affection level
+    const keys = Object.keys(S.prompts);
+    if (keys.length) {
+      const affMap = {'sister-null':0,'sister-verylow':10,'sister-low':30,'sister-medium':60,'sister-high':80};
+      const sorted = keys.filter(k=>affMap[k]!=null).sort((a,b)=>affMap[a]-affMap[b]);
+      let best = keys[0];
+      for (const k of sorted) { if (S.affection>=affMap[k]) best=k; }
+      if (!S.prompts[best]) best = keys.find(k=>k.includes('null'))||keys[0];
+      cp = S.prompts[best]?.data;
+    }
   }
 
   let sp = '';
@@ -1908,13 +1961,30 @@ function renderPersonas() {
   const grid = document.getElementById('persona-grid');
   if (!grid) return;
   grid.innerHTML = '';
-  Object.entries(PERSONAS).forEach(([key, p]) => {
+
+  // Built-in personas first
+  const builtIns = Object.entries(PERSONAS).filter(([,p]) => p.isBuiltIn);
+  const imported = Object.entries(PERSONAS).filter(([,p]) => !p.isBuiltIn);
+
+  const makeBtn = (key, p) => {
     const btn = document.createElement('button');
     btn.className = 'persona-btn' + (S.persona === key ? ' active' : '');
     btn.innerHTML = `<div class="pb-icon">${p.icon}</div><div class="pb-name">${p.name}</div>`;
     btn.addEventListener('click', () => switchPersona(key));
     grid.appendChild(btn);
-  });
+  };
+
+  builtIns.forEach(([k,p]) => makeBtn(k,p));
+
+  // Divider if both exist
+  if (imported.length) {
+    const sep = document.createElement('div');
+    sep.style.cssText = 'grid-column:1/-1;font-size:10px;color:var(--txt3);padding:4px 0 2px;border-top:1px solid var(--border);margin-top:2px;';
+    sep.textContent = `📋 导入的人设 (${imported.length})`;
+    grid.appendChild(sep);
+    imported.forEach(([k,p]) => makeBtn(k,p));
+  }
+
   const desc = document.getElementById('persona-desc');
   if (desc && PERSONAS[S.persona]) desc.textContent = PERSONAS[S.persona].desc;
 }
