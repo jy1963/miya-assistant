@@ -638,6 +638,24 @@ body::after {
 }
 .modal-x:hover { color:var(--txt); background:var(--accent-dim); }
 
+/* ─── Error Modal ─── */
+.err-modal-body { border-color: var(--red) !important; }
+.err-modal-body h3 {
+  background: linear-gradient(135deg, var(--red), #f97316) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
+}
+.err-msg { font-size:14px; color:var(--txt); margin-bottom:16px; line-height:1.6; word-break:break-word; }
+.err-detail {
+  background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-xs);
+  padding:12px; font-size:11px; color:var(--txt3); font-family:'Courier New',monospace;
+  max-height:160px; overflow-y:auto; margin-bottom:16px; line-height:1.5;
+  white-space:pre-wrap; word-break:break-all;
+}
+.err-btns { display:flex; gap:8px; }
+.err-btns .btn { flex:1; text-align:center; }
+
 /* ─── Toast ─── */
 .toast {
   position:fixed; bottom:90px; left:50%;
@@ -658,6 +676,107 @@ body::after {
 @keyframes toastIn {
   from { opacity:0; transform:translateX(-50%) translateY(12px) scale(.95); }
   to { opacity:1; transform:translateX(-50%) translateY(0) scale(1); }
+}
+
+/* ─── Enhanced Animations ─── */
+/* Sidebar panel slide-in */
+.panel.active {
+  animation: panelIn .3s cubic-bezier(.16,1,.3,1);
+}
+@keyframes panelIn {
+  from { opacity:0; transform:translateY(8px); }
+  to { opacity:1; transform:translateY(0); }
+}
+/* Persona button stagger entrance */
+.persona-btn {
+  animation: personaIn .4s cubic-bezier(.16,1,.3,1) backwards;
+}
+.persona-btn:nth-child(1) { animation-delay: .03s; }
+.persona-btn:nth-child(2) { animation-delay: .06s; }
+.persona-btn:nth-child(3) { animation-delay: .09s; }
+.persona-btn:nth-child(4) { animation-delay: .12s; }
+.persona-btn:nth-child(5) { animation-delay: .15s; }
+.persona-btn:nth-child(6) { animation-delay: .18s; }
+@keyframes personaIn {
+  from { opacity:0; transform:scale(.9) translateY(6px); }
+  to { opacity:1; transform:scale(1) translateY(0); }
+}
+/* Send button pulse when ready */
+#send-btn:not(:disabled) {
+  animation: sendReady 2s ease-in-out infinite;
+}
+@keyframes sendReady {
+  0%,100% { box-shadow:0 2px 12px rgba(244,114,182,.2); }
+  50% { box-shadow:0 2px 20px rgba(244,114,182,.4); }
+}
+/* Bubble appear with scale */
+.bubble {
+  animation: bubblePop .4s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes bubblePop {
+  from { opacity:0; transform:scale(.92); }
+  to { opacity:1; transform:scale(1); }
+}
+/* Empty state icon float */
+.empty .icon {
+  animation: iconFloat 3s ease-in-out infinite;
+}
+@keyframes iconFloat {
+  0%,100% { transform:translateY(0); }
+  50% { transform:translateY(-8px); }
+}
+/* Stat bar fill animation */
+.stat .fill {
+  animation: fillGrow .8s cubic-bezier(.16,1,.3,1) backwards;
+}
+@keyframes fillGrow {
+  from { width:0 !important; }
+}
+/* Recall box slide-in */
+.recall-box {
+  animation: recallIn .5s cubic-bezier(.16,1,.3,1);
+}
+@keyframes recallIn {
+  from { opacity:0; transform:translateY(16px); }
+  to { opacity:1; transform:translateY(0); }
+}
+/* Analysis box slide-in */
+.analysis-box {
+  animation: analysisIn .4s cubic-bezier(.16,1,.3,1);
+}
+@keyframes analysisIn {
+  from { opacity:0; transform:translateX(-12px); }
+  to { opacity:1; transform:translateX(0); }
+}
+/* Diary entry hover lift */
+.diary-entry {
+  transition: transform .2s, box-shadow .2s;
+}
+.diary-entry:hover {
+  transform:translateY(-1px);
+  box-shadow:0 4px 12px rgba(0,0,0,.2);
+}
+/* Memory entry hover */
+.mem-entry {
+  transition: transform .2s, box-shadow .2s, border-color .2s;
+}
+.mem-entry:hover {
+  transform:translateX(2px);
+}
+/* Tab switch underline slide */
+.sb-tab {
+  transition: all .25s cubic-bezier(.4,0,.2,1);
+}
+/* Status dot glow */
+.dot.idle {
+  box-shadow:0 0 6px rgba(110,231,183,.4);
+}
+/* Cloud sync button pulse */
+#cloud-btn {
+  transition: all .3s;
+}
+#cloud-btn:hover {
+  transform:scale(1.1);
 }
 
 /* ─── Token counter ─── */
@@ -1420,6 +1539,7 @@ async function callAPI(messages, retries = 2) {
       return resp;
     } catch(e) {
       lastErr = e;
+      ErrorLog.add(e, `API call attempt ${attempt+1}/${retries+1}`);
       if (e.name === 'AbortError') throw e;
       if (attempt < retries) { await new Promise(r => setTimeout(r, 1500 * (attempt + 1))); continue; }
     }
@@ -1790,7 +1910,11 @@ async function send() {
     if (e.name === 'AbortError') {
       addMsg('ai', '⏹️ 已终止生成');
     } else {
-      addMsg('ai', '⚠️ ' + e.message);
+      addMsg('ai', '⚠️ 出现错误，点击查看详情');
+      // Show error modal with downloadable log
+      const lastMsg = S.chat.length ? S.chat[S.chat.length-1].content : '(无)';
+      const context = `发送消息时出错 | 最后消息: ${lastMsg.slice(0,50)}`;
+      showErrorModal(e.message, e.stack, context);
     }
   } finally {
     S.busy = false;
@@ -2620,7 +2744,16 @@ const CloudSync = {
       });
     }
     if (d.gameData) { S.gameData = d.gameData; S.affection = d.gameData.characterStats?.affection ?? 0; S.trust = d.gameData.characterStats?.trust ?? 50; }
-    if (d.settings) S.settings = d.settings;
+    // Smart merge: preserve local settings that cloud doesn't have
+    if (d.settings) {
+      const defaults = { apiUrl:'https://api.deepseek.com/v1', apiKey:'', model:'deepseek-chat', temperature:0.9, ctxDepth:'full', customSP:'' };
+      const cloudSettings = { ...defaults, ...d.settings };
+      // Keep local values for any field the cloud doesn't have a real value for
+      Object.keys(cloudSettings).forEach(k => {
+        if (!cloudSettings[k] && S.settings[k]) cloudSettings[k] = S.settings[k];
+      });
+      S.settings = cloudSettings;
+    }
     if (d.emotionState) S.emotion = d.emotionState;
     if (d.topics) S.topics = d.topics;
     if (d.summary) S.summary = d.summary;
@@ -2771,11 +2904,20 @@ async function doLogin() {
     showToast('✅ 登录成功');
     closeCloudAuth();
     updateCloudUI();
-    // Auto download on login
+    // Auto download on login, or upload if no cloud data
     try {
-      await CloudSync.download();
-      showToast('☁️ 已从云端同步数据');
-    } catch(e) { /* first login may have no data */ }
+      const hasCloudData = await CloudSync.download();
+      if (hasCloudData) {
+        showToast('☁️ 已从云端同步数据');
+      } else {
+        // No cloud data — upload local data so it's not lost
+        await CloudSync.upload();
+        showToast('☁️ 已将本地数据同步到云端');
+      }
+    } catch(e) {
+      ErrorLog.add(e, '登录后同步');
+      showToast('⚠️ 同步异常，本地数据未受影响');
+    }
   } catch(e) {
     errEl.textContent = e.message;
     btn.disabled = false; btn.textContent = '登录';
@@ -2842,6 +2984,108 @@ function updateCloudUI() {
     btn.style.color = '';
   }
 }
+
+// ===== Error Handling System =====
+const ErrorLog = {
+  errors: [],
+  maxSize: 50,
+  add(err, context = '') {
+    const entry = {
+      time: new Date().toISOString(),
+      message: err?.message || String(err),
+      stack: err?.stack || '',
+      context,
+      url: location.href,
+      userAgent: navigator.userAgent,
+      state: {
+        busy: S.busy,
+        hasApiKey: !!S.settings.apiKey,
+        model: S.settings.model,
+        apiUrl: S.settings.apiUrl,
+        chatLen: S.chat?.length || 0,
+        diaryLen: S.diary?.length || 0,
+        memLen: S.memories?.length || 0
+      }
+    };
+    this.errors.push(entry);
+    if (this.errors.length > this.maxSize) this.errors = this.errors.slice(-this.maxSize);
+    return entry;
+  },
+  generateReport() {
+    const lines = [
+      '═══════════════════════════════════════',
+      '  Miya Assistant - 错误诊断报告',
+      '═══════════════════════════════════════',
+      `生成时间: ${new Date().toLocaleString('zh-CN')}`,
+      `页面地址: ${location.href}`,
+      `浏览器: ${navigator.userAgent.slice(0, 120)}`,
+      `屏幕尺寸: ${screen.width}x${screen.height}`,
+      '',
+      '─── 当前状态 ───',
+      `API 地址: ${S.settings.apiUrl}`,
+      `模型: ${S.settings.model}`,
+      `Temperature: ${S.settings.temperature}`,
+      `Context 深度: ${S.settings.ctxDepth}`,
+      `对话数: ${S.chat?.length || 0}`,
+      `日记数: ${S.diary?.length || 0}`,
+      `记忆数: ${S.memories?.length || 0}`,
+      `正在生成: ${S.busy ? '是' : '否'}`,
+      `云端登录: ${CloudSync?.isLoggedIn() ? '是' : '否'}`,
+      '',
+      `─── 错误记录 (共 ${this.errors.length} 条) ───`,
+    ];
+    this.errors.forEach((e, i) => {
+      lines.push('', `▸ 错误 #${i + 1} [${e.time}]`);
+      lines.push(`  上下文: ${e.context || '未知'}`);
+      lines.push(`  消息: ${e.message}`);
+      if (e.stack) lines.push(`  堆栈: ${e.stack.slice(0, 500)}`);
+    });
+    lines.push('', '═══════════════════════════════════════');
+    return lines.join('\n');
+  },
+  download() {
+    const report = this.generateReport();
+    const blob = new Blob([report], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `miya_error_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.log`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+};
+
+function showErrorModal(message, details = '', context = '') {
+  const entry = ErrorLog.add({ message, stack: details }, context);
+  // Remove existing error modal if any
+  document.getElementById('error-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.id = 'error-modal';
+  modal.innerHTML = `
+  <div class="modal-body err-modal-body" style="max-width:440px;">
+    <button class="modal-x" onclick="this.closest('.modal').remove()">&times;</button>
+    <h3>⚠️ 出错了</h3>
+    <div class="err-msg">${message.replace(/</g,'&lt;')}</div>
+    ${details ? `<div class="err-detail">${(details+'').replace(/</g,'&lt;').slice(0,1000)}</div>` : ''}
+    <div class="err-btns">
+      <button class="btn btn-s" onclick="this.closest('.modal').remove()">关闭</button>
+      <button class="btn btn-a" onclick="ErrorLog.download(); this.closest('.modal').remove()">📥 下载错误日志</button>
+    </div>
+    <div style="font-size:10px;color:var(--txt3);text-align:center;margin-top:10px;">
+      下载日志可帮助开发者定位问题
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+// Global error handlers
+window.addEventListener('error', (e) => {
+  ErrorLog.add(e.error || new Error(e.message), 'window.error');
+});
+window.addEventListener('unhandledrejection', (e) => {
+  ErrorLog.add(e.reason || new Error('Unhandled Promise Rejection'), 'promise');
+});
 </script>
 </body>
 </html>
