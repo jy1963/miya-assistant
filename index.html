@@ -50,11 +50,15 @@ body {
   font-family: 'Outfit','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;
   background: var(--bg);
   color: var(--txt);
-  height: 110vh;
+  height: 100dvh;
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   -webkit-font-smoothing: antialiased;
+  position: fixed;
+  width: 100%;
+  top: 0;
+  left: 0;
 }
 
 /* Ambient background glow */
@@ -681,20 +685,26 @@ body::after {
 @media(max-width:768px) {
   #sidebar {
     position:fixed; left:0; top:0; bottom:0; width:300px;
-    margin-left:-300px; z-index:200; pointer-events:none;
+    margin-left:-300px; z-index:300; pointer-events:none;
     transition:margin-left .35s cubic-bezier(.4,0,.2,1);
+    -webkit-overflow-scrolling:touch;
+    overflow-y:auto;
   }
   #sidebar.open { margin-left:0; pointer-events:auto; }
-  #sidebar-overlay.show { display:block; z-index:199; }
+  #sidebar.collapsed { margin-left:-300px; pointer-events:none; }
+  #sidebar-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:299; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
+  #sidebar-overlay.show { display:block; }
   #menu-btn { padding:8px 12px; min-width:44px; min-height:44px; }
   .sb-tab { padding:12px 0; font-size:12px; }
   .bubble { max-width:85%; }
-  .sb-body { -webkit-overflow-scrolling:touch; }
+  .sb-body { -webkit-overflow-scrolling:touch; overflow-y:auto; }
   #send-btn { min-width:48px; min-height:48px; }
   #stop-btn { min-width:48px; min-height:48px; }
   #end-btn { min-width:48px; min-height:48px; }
   #input-area { position:sticky; bottom:0; }
   #chat { padding:14px; }
+  /* Ensure settings inputs are accessible on mobile */
+  .sg input, .sg select, .sg textarea { font-size:16px; }
 }
 }
 </style>
@@ -1056,9 +1066,22 @@ const EM = {
 
 // ===== Init =====
 function closeSidebar() {
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('sidebar').classList.add('collapsed');
-  document.getElementById('sidebar-overlay').classList.remove('show');
+  const sb = document.getElementById('sidebar');
+  const ov = document.getElementById('sidebar-overlay');
+  sb.classList.remove('open');
+  ov.classList.remove('show');
+  // On mobile, ensure it goes back to hidden state
+  if (innerWidth <= 768) {
+    sb.style.marginLeft = '-300px';
+    sb.style.pointerEvents = 'none';
+    // Reset inline styles after transition
+    setTimeout(() => {
+      sb.style.marginLeft = '';
+      sb.style.pointerEvents = '';
+    }, 400);
+  } else {
+    sb.classList.add('collapsed');
+  }
 }
 
 function init() {
@@ -1119,12 +1142,19 @@ function setupUI() {
       document.getElementById('panel-'+t.dataset.tab).classList.add('active');
     });
   });
-  document.getElementById('menu-btn').addEventListener('click', () => {
+  document.getElementById('menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
     const sb=document.getElementById('sidebar');
     const ov=document.getElementById('sidebar-overlay');
     if (innerWidth<=768) {
-      sb.classList.toggle('open');
-      ov.classList.toggle('show');
+      const isOpen = sb.classList.contains('open');
+      if (isOpen) {
+        closeSidebar();
+      } else {
+        sb.classList.remove('collapsed');
+        sb.classList.add('open');
+        ov.classList.add('show');
+      }
     } else {
       sb.classList.toggle('collapsed');
     }
@@ -2422,6 +2452,22 @@ const CloudSync = {
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
   },
 
+  // ===== Generate truly unique user ID =====
+  generateUID() {
+    // Use crypto API for strong randomness
+    const arr = new Uint8Array(12);
+    crypto.getRandomValues(arr);
+    const hex = Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join('');
+    // Format: u_<timestamp_base36>_<random_hex> — human-readable prefix + collision-proof suffix
+    return 'u_' + Date.now().toString(36) + '_' + hex;
+  },
+
+  // ===== Check if a UID directory already exists =====
+  async _uidExists(uid) {
+    const result = await this._readFile(`users/${uid}.json`);
+    return result !== null;
+  },
+
   // ===== Registry (username → UID mapping) =====
   async _getRegistry() {
     const r = await this._readFile('users/registry.json');
@@ -2432,35 +2478,65 @@ const CloudSync = {
   async register(username, password) {
     // Validate
     if (!username || username.length < 2) throw new Error('用户名至少2个字符');
+    if (username.length > 20) throw new Error('用户名最多20个字符');
     if (!password || password.length < 4) throw new Error('密码至少4个字符');
+    // Disallow special chars in username
+    if (!/^[a-zA-Z0-9_\-\u4e00-\u9fff]+$/.test(username)) {
+      throw new Error('用户名只能包含字母、数字、下划线、连字符和中文');
+    }
 
-    // Check registry
-    const reg = await this._getRegistry();
-    if (reg.content[username]) throw new Error('用户名已被注册');
+    // Retry loop to handle concurrent registrations with same username
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // Fresh read each attempt (registry may have changed)
+      const reg = await this._getRegistry();
+      if (reg.content[username]) {
+        throw new Error(`用户名「${username}」已被注册，请换一个名字`);
+      }
 
-    // Generate UID
-    const uid = username + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-    const hash = await this.hashPassword(password);
+      // Generate truly unique UID
+      const uid = this.generateUID();
+      const hash = await this.hashPassword(password);
 
-    // Update registry
-    reg.content[username] = { uid, hash, created: new Date().toISOString() };
-    await this._writeFile('users/registry.json', reg.content, reg.sha, `register: ${username}`);
+      // Prepare updated registry
+      const newReg = { ...reg.content };
+      newReg[username] = { uid, hash, created: new Date().toISOString() };
 
-    // Save locally
-    localStorage.setItem('miya_cloud_user', JSON.stringify({ username, uid, hash }));
-    localStorage.setItem('miya_uid', uid);
-
-    return { username, uid };
+      try {
+        await this._writeFile('users/registry.json', newReg, reg.sha, `register: ${username}`);
+        // Success — save locally
+        localStorage.setItem('miya_cloud_user', JSON.stringify({ username, uid, hash }));
+        localStorage.setItem('miya_uid', uid);
+        return { username, uid };
+      } catch(e) {
+        // If 409 Conflict (sha mismatch), retry with fresh registry
+        if (e.message.includes('409') && attempt < 2) {
+          console.warn(`Registration conflict, retrying (${attempt + 1}/3)...`);
+          await new Promise(r => setTimeout(r, 500 + Math.random() * 1000));
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw new Error('注册失败：并发冲突，请重试');
   },
 
   // ===== Login =====
   async login(username, password) {
+    if (!username || !password) throw new Error('请填写用户名和密码');
+
     const reg = await this._getRegistry();
     const user = reg.content[username];
     if (!user) throw new Error('用户名不存在');
 
     const hash = await this.hashPassword(password);
     if (hash !== user.hash) throw new Error('密码错误');
+
+    // Verify the user's data file exists
+    const dataExists = await this._uidExists(user.uid);
+    if (!dataExists) {
+      // First login after registration — no data uploaded yet, that's OK
+      console.log('First login, no cloud data yet');
+    }
 
     localStorage.setItem('miya_cloud_user', JSON.stringify({ username, uid: user.uid, hash }));
     localStorage.setItem('miya_uid', user.uid);
@@ -2477,7 +2553,8 @@ const CloudSync = {
       gameData: S.gameData, settings: S.settings, chatHistory: S.chat,
       emotionState: S.emotion, topics: S.topics, summary: S.summary,
       relationship: S.relationship, convArc: S.convArc, persona: S.persona,
-      syncTime: new Date().toISOString()
+      syncTime: new Date().toISOString(),
+      version: 1
     };
 
     const path = `users/${cloudUser.uid}.json`;
@@ -2537,6 +2614,11 @@ const CloudSync = {
     return u?.username || null;
   },
 
+  getUID() {
+    const u = JSON.parse(localStorage.getItem('miya_cloud_user') || 'null');
+    return u?.uid || localStorage.getItem('miya_uid') || null;
+  },
+
   logout() {
     localStorage.removeItem('miya_cloud_user');
     localStorage.removeItem('miya_uid');
@@ -2579,7 +2661,7 @@ function showCloudAuth() {
     ${CloudSync.isLoggedIn() ? `
     <div class="ca-logged-in">
       <div class="ca-user">👤 ${CloudSync.getUsername()}</div>
-      <div class="ca-uid">UID: ${localStorage.getItem('miya_uid')||'?'}</div>
+      <div class="ca-uid">UID: ${CloudSync.getUID()||'?'}</div>
       <div class="ca-sync-btns">
         <button class="btn btn-a" onclick="doUpload()">⬆️ 上传数据</button>
         <button class="btn btn-s" onclick="doDownload()">⬇️ 下载数据</button>
@@ -2597,18 +2679,19 @@ function showCloudAuth() {
       <input class="ca-input" id="ca-login-user" placeholder="用户名" autocomplete="username">
       <input class="ca-input" id="ca-login-pass" type="password" placeholder="密码" autocomplete="current-password">
       <div class="ca-error" id="ca-login-err"></div>
-      <button class="ca-btn" id="ca-login-btn" onclick="doLogin()">登录</button>
+      <button class="btn ca-btn" id="ca-login-btn" onclick="doLogin()">登录</button>
       <div class="ca-hint">需要一个有 repo 权限的 GitHub Personal Access Token</div>
     </div>
     <div class="ca-form" id="form-register">
       <div style="font-size:12px;color:var(--txt2);margin-bottom:10px;">🔑 GitHub Token（用于云端存储）</div>
       <input class="ca-input" id="ca-token-reg" placeholder="ghp_xxxx..." type="password" value="${localStorage.getItem('miya_cloud_token')||''}" style="margin-bottom:14px;">
-      <input class="ca-input" id="ca-reg-user" placeholder="用户名（唯一，用于识别身份）" autocomplete="username">
+      <input class="ca-input" id="ca-reg-user" placeholder="用户名（唯一，用于识别身份）" autocomplete="username" maxlength="20">
+      <div style="font-size:10px;color:var(--txt3);margin-bottom:10px;margin-top:-6px;">只能包含字母、数字、下划线、连字符和中文，2-20个字符</div>
       <input class="ca-input" id="ca-reg-pass" type="password" placeholder="密码（至少4位）" autocomplete="new-password">
       <input class="ca-input" id="ca-reg-pass2" type="password" placeholder="确认密码" autocomplete="new-password">
       <div class="ca-error" id="ca-reg-err"></div>
-      <button class="ca-btn" id="ca-reg-btn" onclick="doRegister()">注册</button>
-      <div class="ca-hint">注册后获得唯一云端空间</div>
+      <button class="btn ca-btn" id="ca-reg-btn" onclick="doRegister()">注册</button>
+      <div class="ca-hint">注册后获得唯一云端空间，系统自动分配唯一ID</div>
     </div>
     `}
   </div>`;
