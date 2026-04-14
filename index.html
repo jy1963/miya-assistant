@@ -1147,12 +1147,14 @@ function makePersonaFromPrompt(key, promptData) {
   const meta = PROMPT_NAME_MAP[key] || { name: key, icon:'🎭' };
   const d = promptData?.data || promptData || {};
   const personality = d.personality || '';
-  // Extract short description from personality (first sentence, max 30 chars)
   const shortDesc = personality.replace(/\n/g,' ').slice(0, 40) + (personality.length > 40 ? '…' : '');
+  // Use character card name/icon if available
+  const displayName = d.name || meta.name;
+  const displayIcon = d.icon || meta.icon;
   return {
-    name: meta.name,
-    icon: meta.icon,
-    desc: shortDesc,
+    name: displayName,
+    icon: displayIcon,
+    desc: shortDesc || displayName,
     traits: personality,
     promptKey: key,
     isBuiltIn: false
