@@ -724,6 +724,10 @@ body::after {
   /* Cloud button compact on mobile */
   #cloud-btn { font-size:16px !important; padding:6px 8px !important; }
   #cloud-btn .cb-text { display:none; }
+  /* Cloud auth modal inputs — 16px prevents iOS auto-zoom */
+  .ca-input { font-size:16px !important; }
+  /* Cloud auth modal — full-height on small screens so keyboard doesn't hide form */
+  .modal-body { max-height:90vh; }
 }
 </style>
 </head>
