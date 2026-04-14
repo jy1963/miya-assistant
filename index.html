@@ -913,6 +913,7 @@ function loadStorage() {
       if (S.settings.model==='custom') document.getElementById('model-custom').style.display='block';
     }
   } catch(e){}
+  S.busy = false; // 页面加载时强制重置，防止残留"正在生成"状态
 }
 function saveStorage() { try { localStorage.setItem('miya_u', JSON.stringify(S)); } catch(e){} }
 
