@@ -2793,6 +2793,8 @@ const CloudSync = {
   logout() {
     localStorage.removeItem('miya_cloud_user');
     localStorage.removeItem('miya_uid');
+    localStorage.removeItem('miya_cloud_token');
+    this._token = null;
   }
 };
 
@@ -2846,23 +2848,25 @@ function showCloudAuth() {
     ` : `
     <div class="ca-form active" id="form-login">
       <div style="font-size:12px;color:var(--txt2);margin-bottom:10px;">🔑 GitHub Token（用于云端存储）</div>
-      <input class="ca-input" id="ca-token" placeholder="ghp_xxxx..." type="password" value="${localStorage.getItem('miya_cloud_token')||''}" style="margin-bottom:14px;">
+      <input class="ca-input" id="ca-token" placeholder="ghp_xxxx..." type="password" style="margin-bottom:6px;">
+      <div style="font-size:10px;color:var(--yellow);margin-bottom:10px;line-height:1.4;">⚠️ 建议创建仅含此仓库权限的 Fine-grained Token，不要用全权限的 Classic Token</div>
       <input class="ca-input" id="ca-login-user" placeholder="用户名" autocomplete="username">
       <input class="ca-input" id="ca-login-pass" type="password" placeholder="密码" autocomplete="current-password">
       <div class="ca-error" id="ca-login-err"></div>
       <button class="btn ca-btn" id="ca-login-btn" onclick="doLogin()">登录</button>
-      <div class="ca-hint">需要一个有 repo 权限的 GitHub Personal Access Token</div>
+      <div class="ca-hint">🔒 Token 仅存储在您的浏览器本地，退出登录时自动清除<br>建议使用 <a href="https://github.com/settings/tokens?type=beta" target="_blank" style="color:var(--accent);">Fine-grained Token</a>，仅授权此仓库的 Contents 读写权限</div>
     </div>
     <div class="ca-form" id="form-register">
       <div style="font-size:12px;color:var(--txt2);margin-bottom:10px;">🔑 GitHub Token（用于云端存储）</div>
-      <input class="ca-input" id="ca-token-reg" placeholder="ghp_xxxx..." type="password" value="${localStorage.getItem('miya_cloud_token')||''}" style="margin-bottom:14px;">
+      <input class="ca-input" id="ca-token-reg" placeholder="ghp_xxxx..." type="password" style="margin-bottom:6px;">
+      <div style="font-size:10px;color:var(--yellow);margin-bottom:10px;line-height:1.4;">⚠️ 建议创建仅含此仓库权限的 Fine-grained Token</div>
       <input class="ca-input" id="ca-reg-user" placeholder="用户名（唯一，用于识别身份）" autocomplete="username" maxlength="20">
       <div style="font-size:10px;color:var(--txt3);margin-bottom:10px;margin-top:-6px;">只能包含字母、数字、下划线、连字符和中文，2-20个字符</div>
       <input class="ca-input" id="ca-reg-pass" type="password" placeholder="密码（至少4位）" autocomplete="new-password">
       <input class="ca-input" id="ca-reg-pass2" type="password" placeholder="确认密码" autocomplete="new-password">
       <div class="ca-error" id="ca-reg-err"></div>
       <button class="btn ca-btn" id="ca-reg-btn" onclick="doRegister()">注册</button>
-      <div class="ca-hint">注册后获得唯一云端空间，系统自动分配唯一ID</div>
+      <div class="ca-hint">注册后获得唯一云端空间，系统自动分配唯一ID<br>🔒 Token 仅存本地，退出时自动清除</div>
     </div>
     `}
   </div>`;
