@@ -587,6 +587,26 @@ body::after {
 .typing-dot:nth-child(3) { animation-delay:.4s; }
 @keyframes tb { 0%,60%,100% { transform:translateY(0); opacity:.5; } 30% { transform:translateY(-8px); opacity:1; } }
 
+/* Clickable error messages in chat */
+.msg.error-clickable { cursor:pointer; }
+.msg.error-clickable .bubble {
+  border-color: rgba(248,113,113,.25) !important;
+  background: rgba(248,113,113,.06) !important;
+  position: relative;
+}
+.msg.error-clickable .bubble::after {
+  content: 'tap';
+  position: absolute; bottom: 4px; right: 10px;
+  font-size: 9px; color: rgba(248,113,113,.5);
+  letter-spacing: 1px;
+}
+.msg.error-clickable:active .bubble { transform:scale(.97); opacity:.85; }
+.msg.error-clickable:hover .bubble { border-color: rgba(248,113,113,.4) !important; box-shadow: 0 0 12px rgba(248,113,113,.15); }
+@media(max-width:768px) {
+  .msg.error-clickable .bubble { padding: 14px 18px; }
+  .msg.error-clickable:active .bubble { transform:scale(.96); }
+}
+
 .empty { text-align:center; padding:60px 24px; color:var(--txt3); }
 .empty .icon { font-size:52px; margin-bottom:16px; }
 .empty h3 { color:var(--txt2); font-size:16px; font-weight:600; margin-bottom:10px; }
@@ -847,6 +867,10 @@ body::after {
   .ca-input { font-size:16px !important; }
   /* Cloud auth modal — full-height on small screens so keyboard doesn't hide form */
   .modal-body { max-height:90vh; }
+  /* Modal buttons larger for touch */
+  .modal-x { min-width:44px; min-height:44px; font-size:26px; display:flex; align-items:center; justify-content:center; }
+  .err-btns .btn { padding:12px 16px; font-size:13px; min-height:44px; }
+  .modal-body { padding:20px; -webkit-overflow-scrolling:touch; }
 }
 </style>
 </head>
@@ -1528,6 +1552,10 @@ async function callAPI(messages, retries = 2) {
       lastErr = e;
       ErrorLog.add(e, `API call attempt ${attempt+1}/${retries+1}`);
       if (e.name === 'AbortError') throw e;
+      // Detect CORS / network errors and give clear message
+      if (e instanceof TypeError && (e.message.includes('Failed to fetch') || e.message.includes('NetworkError') || e.message.includes('Network request failed'))) {
+        lastErr = new Error(`网络请求失败。可能原因：\n1. API 地址不正确或无法访问\n2. 浏览器跨域限制（CORS）—— 请确认 API 服务商允许浏览器直接调用\n3. 网络连接问题\n\n当前 API 地址：${S.settings.apiUrl}\n💡 建议：检查设置中的 API 地址是否正确，或联系 API 服务商确认是否支持浏览器端调用`);
+      }
       if (attempt < retries) { await new Promise(r => setTimeout(r, 1500 * (attempt + 1))); continue; }
     }
   }
@@ -1897,11 +1925,19 @@ async function send() {
     if (e.name === 'AbortError') {
       addMsg('ai', '⏹️ 已终止生成');
     } else {
-      addMsg('ai', '⚠️ 出现错误，点击查看详情');
-      // Show error modal with downloadable log
+      const errMsg = e.message || String(e);
       const lastMsg = S.chat.length ? S.chat[S.chat.length-1].content : '(无)';
       const context = `发送消息时出错 | 最后消息: ${lastMsg.slice(0,50)}`;
-      showErrorModal(e.message, e.stack, context);
+      // Add clickable error message
+      const errEl = addMsg('ai', '⚠️ 出现错误，点击查看详情\n\n' + errMsg.slice(0, 200));
+      if (errEl) {
+        errEl.classList.add('error-clickable');
+        errEl.title = '点击查看完整错误详情';
+        const _errMsg = errMsg, _stack = e.stack, _ctx = context;
+        errEl.addEventListener('click', () => showErrorModal(_errMsg, _stack, _ctx));
+      }
+      // Also show modal immediately
+      try { showErrorModal(errMsg, e.stack, context); } catch(_){}
     }
   } finally {
     S.busy = false;
@@ -3063,21 +3099,31 @@ function showErrorModal(message, details = '', context = '') {
   const modal = document.createElement('div');
   modal.className = 'modal';
   modal.id = 'error-modal';
+  modal.style.zIndex = '9999';
+  modal.style.position = 'fixed';
+  modal.style.inset = '0';
+  // Escape HTML in message
+  const safeMsg = String(message).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  const safeDetails = details ? String(details).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').slice(0,1000) : '';
+  const safeCtx = context ? String(context).replace(/&/g,'&amp;').replace(/</g,'&lt;') : '';
   modal.innerHTML = `
   <div class="modal-body err-modal-body" style="max-width:440px;">
-    <button class="modal-x" onclick="this.closest('.modal').remove()">&times;</button>
+    <button class="modal-x" onclick="document.getElementById('error-modal').remove()">&times;</button>
     <h3>⚠️ 出错了</h3>
-    <div class="err-msg">${message.replace(/</g,'&lt;')}</div>
-    ${details ? `<div class="err-detail">${(details+'').replace(/</g,'&lt;').slice(0,1000)}</div>` : ''}
+    <div class="err-msg">${safeMsg}</div>
+    ${safeCtx ? `<div style="font-size:11px;color:var(--txt3);margin-bottom:10px;">📍 ${safeCtx}</div>` : ''}
+    ${safeDetails ? `<div class="err-detail">${safeDetails}</div>` : ''}
     <div class="err-btns">
-      <button class="btn btn-s" onclick="this.closest('.modal').remove()">关闭</button>
-      <button class="btn btn-a" onclick="ErrorLog.download(); this.closest('.modal').remove()">📥 下载错误日志</button>
+      <button class="btn btn-s" onclick="document.getElementById('error-modal').remove()">关闭</button>
+      <button class="btn btn-a" onclick="ErrorLog.download(); document.getElementById('error-modal').remove()">📥 下载错误日志</button>
     </div>
     <div style="font-size:10px;color:var(--txt3);text-align:center;margin-top:10px;">
       下载日志可帮助开发者定位问题
     </div>
   </div>`;
   document.body.appendChild(modal);
+  // Ensure modal is visible
+  modal.style.display = 'flex';
   modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
 }
 
