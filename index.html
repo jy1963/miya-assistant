@@ -725,7 +725,6 @@ body::after {
   #cloud-btn { font-size:16px !important; padding:6px 8px !important; }
   #cloud-btn .cb-text { display:none; }
 }
-}
 </style>
 </head>
 <body>
@@ -1589,7 +1588,6 @@ function buildSystemPrompt() {
   if (S.settings.customSP) sp += '\n'+S.settings.customSP+'\n';
 
   // Persona traits
-  const persona = PERSONAS[S.persona];
   if (persona) {
     sp += `\n【当前人格模式】${persona.icon} ${persona.name}\n`;
     sp += `${persona.traits}\n`;
