@@ -1096,7 +1096,7 @@ body::after {
         <div style="margin-top:14px;">
           <div style="font-size:13px;font-weight:600;margin-bottom:8px;">🎭 人设切换</div>
           <div id="persona-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;max-height:220px;overflow-y:auto;scrollbar-width:thin;"></div>
-          <div id="persona-desc" style="margin-top:8px;font-size:11px;color:var(--txt2);line-height:1.5;padding:8px 10px;background:var(--card);border-radius:var(--radius-xs);border:1px solid var(--border);min-height:36px;"></div>
+          <div id="persona-desc" style="margin-top:8px;font-size:11px;color:var(--txt2);line-height:1.6;padding:10px 12px;background:var(--card);border-radius:var(--radius-xs);border:1px solid var(--border);min-height:36px;max-height:180px;overflow-y:auto;scrollbar-width:thin;white-space:pre-wrap;word-break:break-all;"></div>
         </div>
         <div class="btns" style="margin-top:12px;">
           <button class="btn btn-s btn-sm" onclick="exportData()">📥 导出</button>
@@ -2930,11 +2930,12 @@ function renderPersonas() {
   }
 
   grid.style.display = 'grid';
+  grid.style.gridTemplateColumns = '1fr 1fr';
 
   const makeBtn = (key, p) => {
     const btn = document.createElement('button');
     btn.className = 'persona-btn' + (S.persona === key ? ' active' : '');
-    btn.innerHTML = `<div class="pb-icon">${p.icon}</div><div class="pb-name">${p.name}</div>`;
+    btn.innerHTML = `<div class="pb-icon">${p.icon}</div><div class="pb-name">${p.name}</div><div style="font-size:9px;color:var(--txt3);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(p.desc||'').slice(0,12)}</div>`;
     btn.addEventListener('click', () => switchPersona(key));
     grid.appendChild(btn);
   };
@@ -2943,8 +2944,9 @@ function renderPersonas() {
 
   const desc = document.getElementById('persona-desc');
   if (desc) {
-    if (PERSONAS[S.persona]) {
-      desc.textContent = PERSONAS[S.persona].desc;
+    const cur = PERSONAS[S.persona];
+    if (cur && !cur.isBuiltIn) {
+      desc.textContent = `【${cur.icon} ${cur.name}】\n${cur.desc || ''}\n\n${cur.traits || ''}`;
     } else {
       desc.textContent = `已导入 ${imported.length} 个人设，点击切换`;
     }
