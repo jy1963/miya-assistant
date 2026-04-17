@@ -1417,22 +1417,50 @@ function loadStorage() {
     const d = localStorage.getItem(key);
     if (d) {
       const p = JSON.parse(d);
+      // Deep merge settings to avoid losing fields on shallow Object.assign
+      if (p.settings && S.settings) {
+        S.settings = { ...S.settings, ...p.settings };
+        delete p.settings;
+      }
       Object.assign(S, p);
-      // restore UI
-      document.getElementById('api-url').value = S.settings.apiUrl||'';
-      document.getElementById('api-key').value = S.settings.apiKey||'';
-      document.getElementById('model-sel').value = S.settings.model||'deepseek-chat';
-      document.getElementById('temp').value = S.settings.temperature??0.9;
-      document.getElementById('tv').textContent = S.settings.temperature??0.9;
-      document.getElementById('ctx-depth').value = S.settings.ctxDepth||'full';
-      document.getElementById('custom-sp').value = S.settings.customSP||'';
-      document.getElementById('stream-mode').value = S.settings.stream !== false ? 'true' : 'false';
-      if (S.settings.model==='custom') document.getElementById('model-custom').style.display='block';
     }
-  } catch(e){}
+    // Fallback: restore API key from dedicated backup if main storage lost it
+    if (!S.settings.apiKey) {
+      const backupKey = localStorage.getItem(key + '_apikey');
+      if (backupKey) S.settings.apiKey = backupKey;
+    }
+    // Always backup API key on load
+    if (S.settings.apiKey) {
+      localStorage.setItem(key + '_apikey', S.settings.apiKey);
+    }
+    // restore UI
+    document.getElementById('api-url').value = S.settings.apiUrl||'';
+    document.getElementById('api-key').value = S.settings.apiKey||'';
+    document.getElementById('model-sel').value = S.settings.model||'deepseek-chat';
+    document.getElementById('temp').value = S.settings.temperature??0.9;
+    document.getElementById('tv').textContent = S.settings.temperature??0.9;
+    document.getElementById('ctx-depth').value = S.settings.ctxDepth||'full';
+    document.getElementById('custom-sp').value = S.settings.customSP||'';
+    document.getElementById('stream-mode').value = S.settings.stream !== false ? 'true' : 'false';
+    if (S.settings.model==='custom') document.getElementById('model-custom').style.display='block';
+    // Update send status to show API key state
+    updateSendStatus();
+  } catch(e){
+    console.error('loadStorage error:', e);
+  }
   S.busy = false; // 页面加载时强制重置，防止残留"正在生成"状态
 }
-function saveStorage() { const key = getStorageKey(); if (key) try { localStorage.setItem(key, JSON.stringify(S)); } catch(e){} }
+function saveStorage() {
+  const key = getStorageKey();
+  if (!key) return;
+  try {
+    // Backup API key separately to survive settings corruption
+    if (S.settings.apiKey) {
+      localStorage.setItem(key + '_apikey', S.settings.apiKey);
+    }
+    localStorage.setItem(key, JSON.stringify(S));
+  } catch(e){}
+}
 
 // ===== UI Setup =====
 function setupUI() {
