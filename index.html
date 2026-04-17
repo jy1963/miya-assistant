@@ -1154,6 +1154,13 @@ body::after {
         <div class="sg"><label>🌡️ Temperature <span id="tv">0.9</span></label>
           <input type="range" id="temp" min="0" max="2" step="0.1" value="0.9" style="width:100%;">
         </div>
+        <div class="sg"><label>⚡ 流式输出 (SSE)</label>
+          <select id="stream-mode">
+            <option value="true">开启（推荐，支持 OpenAI 格式的 API）</option>
+            <option value="false">关闭（适用于不支持 SSE 的 API）</option>
+          </select>
+          <div style="font-size:10px;color:var(--txt3);margin-top:4px;">💡 如果回复出现乱码，请尝试关闭流式输出</div>
+        </div>
         <div class="sg"><label>📊 Context 深度</label>
           <select id="ctx-depth">
             <option value="full">完整模式（全部日记+全部记忆）</option>
@@ -1413,6 +1420,7 @@ function loadStorage() {
       document.getElementById('tv').textContent = S.settings.temperature??0.9;
       document.getElementById('ctx-depth').value = S.settings.ctxDepth||'full';
       document.getElementById('custom-sp').value = S.settings.customSP||'';
+      document.getElementById('stream-mode').value = S.settings.stream !== false ? 'true' : 'false';
       if (S.settings.model==='custom') document.getElementById('model-custom').style.display='block';
     }
   } catch(e){}
@@ -1576,7 +1584,7 @@ ${diaryText}`;
       { role:'user', content: prompt }
     ]);
     let result = '';
-    for await (const c of streamResp(resp)) result += c;
+    for await (const c of readResp(resp)) result += c;
 
     const match = result.match(/\[[\s\S]*\]/);
     if (match) {
@@ -1667,7 +1675,7 @@ async function callAPI(messages, retries = 2) {
       const resp = await fetch(url, {
         method:'POST',
         headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.settings.apiKey},
-        body: JSON.stringify({ model, messages, temperature: temp, stream: true }),
+        body: JSON.stringify({ model, messages, temperature: temp, stream: S.settings.stream !== false }),
         signal: S.abortController.signal
       });
       if (!resp.ok) {
@@ -1697,6 +1705,20 @@ async function callAPI(messages, retries = 2) {
       }
       S.tokenEstimate += messages.reduce((s,m) => s + m.content.length, 0) / 2;
       document.getElementById('token-info').textContent = `Tokens: ~${Math.round(S.tokenEstimate/1000)}k`;
+      // Wrap body reader to buffer full response for SSE fallback
+      const origReader = resp.body.getReader.bind(resp.body);
+      let _fullBuf = '';
+      resp.body.getReader = function() {
+        const reader = origReader();
+        const origRead = reader.read.bind(reader);
+        reader.read = async function() {
+          const r = await origRead();
+          if (r.value) _fullBuf += new TextDecoder().decode(r.value, {stream:true});
+          if (r.done) resp._fullBody = _fullBuf;
+          return r;
+        };
+        return reader;
+      };
       return resp;
     } catch(e) {
       lastErr = e;
@@ -1712,9 +1734,32 @@ async function callAPI(messages, retries = 2) {
   throw lastErr;
 }
 
+// Auto-detect response format: SSE streaming or plain JSON
+async function* readResp(resp) {
+  if (S.settings.stream === false) {
+    yield* readJSONResp(resp);
+  } else {
+    yield* streamResp(resp);
+  }
+}
+
+// Read non-streaming JSON response as async generator (same interface as streamResp)
+async function* readJSONResp(resp) {
+  const text = await resp.text();
+  try {
+    const j = JSON.parse(text);
+    const c = j.choices?.[0]?.message?.content || j.output_text || j.result || j.text || j.content;
+    if (c) yield c;
+  } catch(e) {
+    // If JSON parse fails, return raw text
+    if (text.trim()) yield text.trim();
+  }
+}
+
 async function* streamResp(resp) {
   const reader = resp.body.getReader(), dec = new TextDecoder();
   let buf = '';
+  let yielded = false;
   while (true) {
     const {done, value} = await reader.read();
     if (done) break;
@@ -1725,15 +1770,42 @@ async function* streamResp(resp) {
       if (!t.startsWith('data: ')) continue;
       const d = t.slice(6);
       if (d==='[DONE]') return;
-      try { const c = JSON.parse(d).choices?.[0]?.delta?.content; if (c) yield c; } catch(e){}
+      try {
+        const parsed = JSON.parse(d);
+        // OpenAI SSE format: choices[0].delta.content
+        const c = parsed.choices?.[0]?.delta?.content;
+        if (c) { yielded = true; yield c; }
+      } catch(e) { /* skip unparseable lines */ }
     }
+  }
+  // Flush remaining buffer
+  if (buf.trim()) {
+    const t = buf.trim();
+    if (t.startsWith('data: ')) {
+      const d = t.slice(6);
+      if (d !== '[DONE]') {
+        try {
+          const parsed = JSON.parse(d);
+          const c = parsed.choices?.[0]?.delta?.content;
+          if (c) { yielded = true; yield c; }
+        } catch(e) {}
+      }
+    }
+  }
+  // Fallback: if nothing was yielded from SSE parsing, try parsing as plain JSON
+  if (!yielded && resp._fullBody) {
+    try {
+      const j = JSON.parse(resp._fullBody);
+      const c = j.choices?.[0]?.message?.content || j.output_text || j.result || j.text || j.content;
+      if (c) yield c;
+    } catch(e) {}
   }
 }
 
 async function callAI(prompt, system='你是一个智能助手。') {
   const resp = await callAPI([{role:'system',content:system},{role:'user',content:prompt}]);
   let out = '';
-  for await (const c of streamResp(resp)) out += c;
+  for await (const c of readResp(resp)) out += c;
   return out.trim();
 }
 
@@ -2334,7 +2406,7 @@ async function send() {
     typing.remove();
     const el = addMsg('ai','',true);
     let full = '';
-    for await (const c of streamResp(resp)) { full += c; updMsg(el,full); }
+    for await (const c of readResp(resp)) { full += c; updMsg(el,full); }
 
     // Parse inline status JSON from end of response
     let displayText = full;
@@ -2526,7 +2598,7 @@ async function sendPlain(text) {
 
     const el = addMsg('ai','',true);
     let full = '';
-    for await (const c of streamResp(resp)) { full += c; updMsg(el,full); }
+    for await (const c of readResp(resp)) { full += c; updMsg(el,full); }
 
     el.querySelector('.bubble').textContent = full;
     S.plainChat.push({role:'assistant', content:full, ts:Date.now()});
@@ -3037,7 +3109,7 @@ ${memText.slice(0, 3000)}
       { role:'user', content: prompt }
     ]);
     let result = '';
-    for await (const c of streamResp(resp)) result += c;
+    for await (const c of readResp(resp)) result += c;
 
     document.getElementById('analysis-content').textContent = result;
     document.getElementById('analysis-modal').style.display = 'flex';
@@ -3058,6 +3130,7 @@ function saveSettings() {
   S.settings.temperature = parseFloat(document.getElementById('temp').value);
   S.settings.ctxDepth = document.getElementById('ctx-depth').value;
   S.settings.customSP = document.getElementById('custom-sp').value;
+  S.settings.stream = document.getElementById('stream-mode').value === 'true';
   saveStorage(); showToast('✅ 已保存'); updateSendStatus();
   if (CloudSync.isLoggedIn()) CloudSync.upload().catch(()=>{});
 }
@@ -3121,7 +3194,7 @@ ${transcript.slice(0, 4000)}
         { role: 'system', content: '你是日记撰写助手，只输出日记正文。' },
         { role: 'user', content: prompt }
       ], 1);
-      for await (const c of streamResp(resp)) diaryContent += c;
+      for await (const c of readResp(resp)) diaryContent += c;
       diaryContent = diaryContent.trim();
     } catch(e) {
       console.error('AI diary summary failed:', e);
@@ -3387,7 +3460,7 @@ const CloudSync = {
     if (d.gameData) { S.gameData = d.gameData; S.affection = d.gameData.characterStats?.affection ?? 0; S.trust = d.gameData.characterStats?.trust ?? 50; }
     // Smart merge: preserve local settings that cloud doesn't have
     if (d.settings) {
-      const defaults = { apiUrl:'https://api.deepseek.com/v1', apiKey:'', model:'deepseek-chat', temperature:0.9, ctxDepth:'full', customSP:'' };
+      const defaults = { apiUrl:'https://api.deepseek.com/v1', apiKey:'', model:'deepseek-chat', temperature:0.9, ctxDepth:'full', customSP:'', stream:true };
       const cloudSettings = { ...defaults, ...d.settings };
       // Keep local values for any field the cloud doesn't have a real value for
       Object.keys(cloudSettings).forEach(k => {
