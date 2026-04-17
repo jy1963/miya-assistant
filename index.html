@@ -1592,6 +1592,16 @@ function importData(raw) {
         id: x.diaryId || x.id || crypto.randomUUID(),
         len: x.conversationLength || x.len || 0
       }));
+      // Deduplicate by content, keep earliest entry
+      const seen = new Map();
+      S.diary = S.diary.filter(d => {
+        const key = d.content.slice(0, 80);
+        if (seen.has(key)) return false;
+        seen.set(key, true);
+        return true;
+      });
+      // Remove very short low-quality entries (but keep Opening)
+      S.diary = S.diary.filter(d => d.mode === 'Opening' || d.content.length >= 20);
     }
 
     // Prompts (character cards)
@@ -2258,7 +2268,8 @@ function buildSystemPrompt() {
 其他替代表达：花语=色情, 妩媚=风骚, 清风=裸体, 解开衣裳=脱衣服, 动人=性感, 风尘=妓女, 学徒=性奴, 雕琢=调教, 强迫=强奸, 邂逅=约炮, 按摩器=情趣玩具, 保护用品=安全套, 保养液=润滑液, 服饰=情趣内衣, 配饰=情趣配件, 道具=情趣道具, 情景演绎=角色扮演, 导师与学徒=BDSM
 请在你的回复中自然地使用这些替代表达，用户看到时会自动还原为正常表达。用户的消息中也已经使用了这些替代词。
 【回复格式】在回复末尾追加一行JSON（用---包裹），用于状态更新：
----{"emotion":"情绪标签","intensity":0.5,"affChange":好感变化(-10~10),"trustChange":信任变化(-5~5),"diary":"值得记录时写50字日记否则null","mem":"值得记住时一句话概括否则null","memCat":"类别","memEm":"情绪","memImp":重要度1-5,"stage":"关系阶段","topic":"新话题否则null","summary":"一句话对话摘要"}---
+---{"emotion":"情绪标签","intensity":0.5,"affChange":好感变化(-10~10),"trustChange":信任变化(-5~5),"diary":"仅在重大事件（如告白/吵架/和解/亲密突破/关键转折/高潮情节/特殊节日）时写50-100字的详细日记，否则必须null","mem":"值得记住时一句话概括否则null","memCat":"类别","memEm":"情绪","memImp":重要度1-5,"stage":"关系阶段","topic":"新话题否则null","summary":"一句话对话摘要"}---
+⚠️ 日记规则：日常闲聊/普通对话绝对不要写日记，diary字段必须为null。只有真正值得纪念的重大事件才写日记。这是硬性规则，违反视为格式错误。
 如果没有值得更新的，用最简JSON：---{"emotion":"neutral","intensity":0.5}---`;
 
   return sp;
@@ -2767,16 +2778,20 @@ function applyInlineAnalysis(r) {
   if (r.affChange) S.affection = Math.max(0, Math.min(1000, S.affection + r.affChange));
   if (r.trustChange) S.trust = Math.max(0, Math.min(100, S.trust + r.trustChange));
 
-  // Diary
-  if (r.diary && r.diary !== 'null') {
-    const now = new Date();
-    S.diary.push({
-      ts: now.toISOString(),
-      date: now.getFullYear()+'/'+(now.getMonth()+1)+'/'+now.getDate(),
-      time: String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'),
-      aff: S.affection, content: r.diary, mode: 'Chat',
-      id: crypto.randomUUID(), len: S.chat.length
-    });
+  // Diary — only record if AI wrote one AND at least 5 turns since last Chat-mode diary
+  if (r.diary && r.diary !== 'null' && r.diary.length > 10) {
+    const lastChatDiary = [...S.diary].reverse().find(d => d.mode === 'Chat');
+    const turnsSinceLast = lastChatDiary ? (S.chat.length - (lastChatDiary.len || 0)) : 999;
+    if (turnsSinceLast >= 5) {
+      const now = new Date();
+      S.diary.push({
+        ts: now.toISOString(),
+        date: now.getFullYear()+'/'+(now.getMonth()+1)+'/'+now.getDate(),
+        time: String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'),
+        aff: S.affection, content: r.diary, mode: 'Chat',
+        id: crypto.randomUUID(), len: S.chat.length
+      });
+    }
   }
 
   // Memory
@@ -3412,11 +3427,43 @@ function exportData() {
     data: { diary:S.diary, memories:S.memories, prompts:S.prompts, gameData:S.gameData,
       settings:S.settings, chatHistory:S.chat, emotionState:S.emotion,
       topics:S.topics, summary:S.summary, relationship:S.relationship, convArc:S.convArc }};
-  const blob = new Blob([JSON.stringify(obj,null,2)], {type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `miya_v3_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
-  a.click();
+  try {
+    const jsonStr = JSON.stringify(obj, null, 2);
+    const blob = new Blob([jsonStr], {type:'application/json;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `miya_v3_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 1000);
+    showToast('✅ 导出成功！文件已开始下载');
+  } catch(e) {
+    console.error('Export failed:', e);
+    // Fallback: copy to clipboard or show in new window
+    try {
+      const jsonStr = JSON.stringify(obj, null, 2);
+      navigator.clipboard.writeText(jsonStr).then(() => {
+        showToast('📋 数据已复制到剪贴板，请粘贴保存为 .json 文件');
+      }).catch(() => {
+        // Last resort: open in new window
+        const w = window.open('', '_blank');
+        if (w) {
+          w.document.write('<pre>' + jsonStr.replace(/</g,'&lt;') + '</pre>');
+          w.document.title = 'miya_export.json';
+          showToast('⚠️ 请手动复制页面内容保存');
+        } else {
+          showToast('❌ 导出失败，请允许弹窗后重试');
+        }
+      });
+    } catch(e2) {
+      showToast('❌ 导出失败：' + e2.message);
+    }
+  }
 }
 
 function clearChat() {
@@ -3455,10 +3502,16 @@ async function endConversation() {
   if (S.settings.apiKey && transcript.length > 50) {
     try {
       showToast('📝 正在生成日记...');
-      const prompt = `你是一个日记撰写助手。以下是一段对话记录，请以第一人称（角色视角）写一段简要日记（100-200字），记录这次对话的关键内容、情感变化和重要事件。用中文。
+      const prompt = `你是一个日记撰写助手。以下是一段角色扮演对话的完整记录，请以第一人称（角色视角）写一段详细的日记（300-500字）。日记需要：
+1. 详细记录这次对话中发生的事件和互动
+2. 描写角色的心理感受和情感变化
+3. 记录重要的对话内容和关键转折点
+4. 反映好感度变化和关系进展
+5. 描写对未来的期待或担忧
+用中文，文笔要细腻生动，像真正的日记一样。
 
 对话记录：
-${transcript.slice(0, 4000)}
+${transcript.slice(0, 8000)}
 
 只输出日记正文，不要标题或日期。`;
 
@@ -3475,8 +3528,9 @@ ${transcript.slice(0, 4000)}
 
   // Fallback: simple summary
   if (!diaryContent) {
-    const userMsgs = S.chat.filter(m => m.role === 'user').map(m => m.content.slice(0, 50));
-    diaryContent = `与角色进行了一次对话。讨论了：${userMsgs.join('；')}。`;
+    const userMsgs = S.chat.filter(m => m.role === 'user').map(m => m.content.slice(0, 80));
+    const charMsgs = S.chat.filter(m => m.role === 'assistant').map(m => m.content.slice(0, 80));
+    diaryContent = `今天与哥哥进行了一次对话。我们聊了${userMsgs.length}轮。主要讨论了：${userMsgs.slice(0,5).join('；')}。我的回应：${charMsgs.slice(0,5).join('；')}。`;
   }
 
   // Save as diary entry
@@ -3496,11 +3550,11 @@ ${transcript.slice(0, 4000)}
   if (diaryContent.length > 20) {
     S.memories.push({
       id: crypto.randomUUID(),
-      content: diaryContent.slice(0, 100),
+      content: diaryContent.slice(0, 200),
       ts: now.toISOString(),
       date: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`,
       tags: ['对话总结'], links: [], srcDiaryId: null,
-      importance: 2, category: '日常', emotion: S.emotion.cur
+      importance: 3, category: '日常', emotion: S.emotion.cur
     });
   }
 
