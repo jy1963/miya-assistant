@@ -873,6 +873,35 @@ body::after {
   .err-btns .btn { padding:12px 16px; font-size:13px; min-height:44px; }
   .modal-body { padding:20px; -webkit-overflow-scrolling:touch; }
 }
+
+/* ─── Plain Chat Mode ─── */
+#chat.plain-mode .msg .bubble {
+  max-width: 80%;
+  line-height: 1.8;
+  font-size: 14.5px;
+}
+#chat.plain-mode .msg.ai .bubble {
+  background: rgba(30,26,48,.6);
+  border-color: rgba(160,155,178,.08);
+}
+#chat.plain-mode .msg.user .bubble {
+  background: linear-gradient(135deg, #3d3862, #332f50);
+}
+#chat.plain-mode .empty .icon {
+  animation: iconFloat 3s ease-in-out infinite;
+}
+@media(min-width:769px) {
+  #chat.plain-mode {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 28px 32px;
+  }
+}
+#mode-toggle:hover {
+  background: var(--accent-dim) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
 </style>
 </head>
 <body>
@@ -1068,6 +1097,7 @@ body::after {
       <span id="top-name">Miya Assistant</span>
       <span id="top-emotion"></span>
       <button id="cloud-btn" onclick="showCloudAuth()" style="background:none;border:none;font-size:13px;cursor:pointer;padding:4px 10px;border-radius:var(--radius-xs);transition:all .2s;font-family:inherit;flex-shrink:0;" title="云端同步">☁️<span class="cb-text"> 云端</span></button>
+      <button id="mode-toggle" onclick="toggleChatMode()" style="background:var(--bg3);border:1px solid var(--border);color:var(--txt2);font-size:11px;cursor:pointer;padding:5px 12px;border-radius:16px;transition:all .25s;font-family:inherit;flex-shrink:0;font-weight:500;letter-spacing:.2px;" title="切换模式">🎭 角色扮演</button>
       <div class="dot idle" id="status-dot"></div>
     </div>
     <div class="topic-bar" id="topic-bar" style="display:none;">
@@ -1196,6 +1226,8 @@ const S = {
   },
   gameData: null,
   chat: [],          // {role, content, ts}
+  plainChat: [],     // plain mode chat history
+  chatMode: 'roleplay', // 'roleplay' | 'plain'
   affection: 0, trust: 50,
   busy: false, recalled: false,
   // Enhanced
@@ -1250,6 +1282,15 @@ function init() {
   loadStorage(); setupUI(); renderAll(); setupMobileKeyboard();
   updateErrBadge();
   updateSendStatus(); updateCloudUI();
+  // Restore chat mode UI
+  if (S.chatMode === 'plain') {
+    const btn = document.getElementById('mode-toggle');
+    btn.textContent = '💬 自由聊天';
+    btn.style.borderColor = 'var(--accent)';
+    btn.style.color = 'var(--accent)';
+    if (innerWidth > 768) document.getElementById('sidebar').classList.add('collapsed');
+  }
+  renderChat();
   // Register Service Worker for offline support
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(()=>{});
@@ -2063,11 +2104,97 @@ function stopGeneration() {
 
 
 // ===== Send (optimized: 1 API call instead of 3) =====
+// ===== Chat Mode Toggle =====
+function toggleChatMode() {
+  S.chatMode = S.chatMode === 'roleplay' ? 'plain' : 'roleplay';
+  const btn = document.getElementById('mode-toggle');
+  const sb = document.getElementById('sidebar');
+  const topicBar = document.getElementById('topic-bar');
+  const chatEl = document.getElementById('chat');
+  const topName = document.getElementById('top-name');
+  const topEmotion = document.getElementById('top-emotion');
+
+  if (S.chatMode === 'plain') {
+    btn.textContent = '💬 自由聊天';
+    btn.style.borderColor = 'var(--accent)';
+    btn.style.color = 'var(--accent)';
+    if (innerWidth > 768) sb.classList.add('collapsed');
+    if (topicBar) topicBar.style.display = 'none';
+    chatEl.classList.add('plain-mode');
+    topName.textContent = '自由聊天';
+    topEmotion.style.display = 'none';
+    document.getElementById('end-btn').style.display = 'none';
+    const ecb = document.getElementById('end-conv-btn');
+    if (ecb) ecb.style.display = 'none';
+  } else {
+    btn.textContent = '🎭 角色扮演';
+    btn.style.borderColor = 'var(--border)';
+    btn.style.color = 'var(--txt2)';
+    if (innerWidth > 768) sb.classList.remove('collapsed');
+    if (topicBar && S.topics.length) topicBar.style.display = 'flex';
+    chatEl.classList.remove('plain-mode');
+    topName.textContent = S.gameData?.characterCard?.name || 'Miya Assistant';
+    topEmotion.style.display = '';
+    if (S.chat.length) {
+      document.getElementById('end-btn').style.display = 'flex';
+      const ecb = document.getElementById('end-conv-btn');
+      if (ecb) ecb.style.display = 'inline-block';
+    }
+  }
+  renderChat();
+  updateSendStatus();
+  saveStorage();
+}
+
+function renderChat() {
+  const chatEl = document.getElementById('chat');
+  chatEl.innerHTML = '';
+  const msgs = S.chatMode === 'plain' ? S.plainChat : S.chat;
+
+  if (!msgs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.id = 'welcome';
+    if (S.chatMode === 'plain') {
+      empty.innerHTML = '<div class="icon">💬</div><h3>自由聊天</h3><p>无角色扮演 · 纯净 AI 对话 · 支持任意话题</p>';
+    } else {
+      empty.innerHTML = '<div class="icon">🌸</div><h3>Miya Assistant - Unlimited</h3><p>无 Token 限制 · AI 深度理解 · 全量记忆 · 实时分析</p>';
+    }
+    chatEl.appendChild(empty);
+    return;
+  }
+
+  msgs.forEach(m => {
+    const d = document.createElement('div');
+    d.className = `msg ${m.role}`;
+    const b = document.createElement('div');
+    b.className = 'bubble';
+    b.textContent = m.content;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    if (m.ts) {
+      const t = new Date(m.ts);
+      meta.textContent = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
+    }
+    d.appendChild(b); d.appendChild(meta);
+    chatEl.appendChild(d);
+  });
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function buildPlainSystemPrompt() {
+  let sp = '你是一个有帮助的AI助手。请用自然、友好的语气回复用户的问题。回答要简洁、准确、有见地。';
+  if (S.settings.customSP) sp += '\n' + S.settings.customSP;
+  return sp;
+}
+
 async function send() {
   const inp = document.getElementById('msg-input');
   const text = inp.value.trim();
   if (!text || S.busy) return;
   if (!S.settings.apiKey) { showToast('❌ 请先配置 API Key'); return; }
+
+  if (S.chatMode === 'plain') return sendPlain(text);
 
   S.busy = true;
   document.getElementById('send-btn').style.display = 'none';
@@ -2174,6 +2301,66 @@ async function send() {
     updateSendStatus();
     // Auto cloud sync (fire & forget)
     if (CloudSync.isLoggedIn()) CloudSync.upload().catch(()=>{});
+  }
+}
+
+// ===== Plain Chat Mode =====
+async function sendPlain(text) {
+  const inp = document.getElementById('msg-input');
+  S.busy = true;
+  document.getElementById('send-btn').style.display = 'none';
+  document.getElementById('stop-btn').style.display = 'flex';
+  document.getElementById('status-dot').className = 'dot thinking';
+  inp.value = ''; inp.style.height = 'auto';
+  updateSendStatus();
+
+  const w = document.getElementById('welcome');
+  if (w) w.remove();
+
+  addMsg('user', text);
+  S.plainChat.push({role:'user', content:text, ts:Date.now()});
+
+  let typing = null;
+  try {
+    typing = addTyping();
+
+    const messages = [
+      { role:'system', content: buildPlainSystemPrompt() }
+    ];
+
+    // Chat history (last 40 messages for context)
+    S.plainChat.slice(-40).forEach(m => messages.push({role:m.role, content:m.content}));
+
+    const resp = await callAPI(messages);
+    typing.remove();
+    const el = addMsg('ai','',true);
+    let full = '';
+    for await (const c of streamResp(resp)) { full += c; updMsg(el,full); }
+
+    el.querySelector('.bubble').textContent = full;
+    S.plainChat.push({role:'assistant', content:full, ts:Date.now()});
+    saveStorage();
+
+  } catch(e) {
+    if (typing) typing.remove();
+    if (e.name === 'AbortError') {
+      addMsg('ai', '⏹️ 已终止生成');
+    } else {
+      const errMsg = e.message || String(e);
+      const errEl = addMsg('ai', '⚠️ 出现错误，点击查看详情\n\n' + errMsg.slice(0, 200));
+      if (errEl) {
+        errEl.classList.add('error-clickable');
+        errEl.title = '点击查看完整错误详情';
+        errEl.addEventListener('click', () => showErrorModal(errMsg, e.stack, '自由聊天模式'));
+      }
+    }
+  } finally {
+    S.busy = false;
+    S.abortController = null;
+    document.getElementById('send-btn').style.display = 'flex';
+    document.getElementById('stop-btn').style.display = 'none';
+    document.getElementById('status-dot').className = 'dot idle';
+    updateSendStatus();
   }
 }
 
@@ -2456,10 +2643,8 @@ function switchPersona(key) {
 function renderAll() {
   updateCharCard(); updateEmotionUI(); updateTopicBar(); renderPersonas();
   renderDiary(); renderMemory(); renderRelPanel();
-  if (S.chat.length) {
-    const w = document.getElementById('welcome');
-    if (w) w.remove();
-    S.chat.forEach(m => addMsg(m.role, m.content));
+  renderChat();
+  if (S.chat.length && S.chatMode === 'roleplay') {
     document.getElementById('end-btn').style.display = 'flex';
     const ecb = document.getElementById('end-conv-btn');
     if (ecb) ecb.style.display = 'inline-block';
@@ -2700,13 +2885,18 @@ function exportData() {
 
 function clearChat() {
   if (!confirm('确定清空对话？')) return;
-  S.chat=[]; S.recalled=false; S.turns=0; S.topics=[]; S.summary='';
-  S.convArc={phase:'开端',beats:[]}; S.relationship.tension=0;
-  document.getElementById('chat').innerHTML='<div class="empty" id="welcome"><div class="icon">🌸</div><h3>对话已清空</h3></div>';
-  document.getElementById('end-btn').style.display = 'none';
-  const ecb = document.getElementById('end-conv-btn');
-  if (ecb) ecb.style.display = 'none';
-  saveStorage(); updateTopicBar(); showToast('✅ 已清空');
+  if (S.chatMode === 'plain') {
+    S.plainChat = [];
+  } else {
+    S.chat=[]; S.recalled=false; S.turns=0; S.topics=[]; S.summary='';
+    S.convArc={phase:'开端',beats:[]}; S.relationship.tension=0;
+    document.getElementById('end-btn').style.display = 'none';
+    const ecb = document.getElementById('end-conv-btn');
+    if (ecb) ecb.style.display = 'none';
+    updateTopicBar();
+  }
+  renderChat();
+  saveStorage(); showToast('✅ 已清空');
 }
 
 // ===== End Conversation =====
