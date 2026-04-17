@@ -1480,9 +1480,12 @@ function setupUI() {
   document.getElementById('file-in').addEventListener('change', handleImport);
   document.getElementById('model-sel').addEventListener('change', e => {
     document.getElementById('model-custom').style.display = e.target.value==='custom'?'block':'none';
+    saveCurrentPresetSettings();
   });
-  // Auto-save API key to current active preset on input
-  document.getElementById('api-key').addEventListener('change', () => saveCurrentPresetKey());
+  document.getElementById('model-custom').addEventListener('change', () => saveCurrentPresetSettings());
+  document.getElementById('stream-mode').addEventListener('change', () => saveCurrentPresetSettings());
+  // Auto-save current preset settings on key change
+  document.getElementById('api-key').addEventListener('change', () => saveCurrentPresetSettings());
   document.getElementById('temp').addEventListener('input', e => { document.getElementById('tv').textContent=e.target.value; });
   document.getElementById('diary-search').addEventListener('input', e => renderDiary(e.target.value));
   document.getElementById('mem-filter').addEventListener('change', renderMemory);
@@ -3148,7 +3151,7 @@ ${memText.slice(0, 3000)}
 const BUILTIN_PRESETS = [
   { name: 'DeepSeek', icon: '🐋', apiUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', stream: true },
   { name: 'OpenAI', icon: '🤖', apiUrl: 'https://api.openai.com/v1', model: 'gpt-4o', stream: true },
-  { name: '小米 MiMo', icon: '📱', apiUrl: 'https://api.xiaomimimo.com/v1', model: 'MiMo-7B', stream: false },
+  { name: '小米 MiMo', icon: '📱', apiUrl: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2-pro', stream: true },
   { name: '月之暗面', icon: '🌙', apiUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', stream: true },
   { name: '智谱 GLM', icon: '🧠', apiUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4', stream: true },
   { name: '通义千问', icon: '🔮', apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo', stream: true },
@@ -3162,35 +3165,43 @@ function saveUserPresets(presets) {
   localStorage.setItem('miya_presets', JSON.stringify(presets));
 }
 
-// Per-preset API key storage (for built-in presets that don't have apiKey field)
-function getPresetKeys() {
-  try { return JSON.parse(localStorage.getItem('miya_preset_keys') || '{}'); } catch(e) { return {}; }
+// Per-preset settings storage (for built-in presets that don't have these fields)
+function getPresetSettings() {
+  try { return JSON.parse(localStorage.getItem('miya_preset_settings') || '{}'); } catch(e) { return {}; }
 }
-function savePresetKey(name, key) {
-  const keys = getPresetKeys();
-  if (key) keys[name] = key;
-  else delete keys[name];
-  localStorage.setItem('miya_preset_keys', JSON.stringify(keys));
+function savePresetSettings(name, settings) {
+  const all = getPresetSettings();
+  all[name] = { ...(all[name] || {}), ...settings };
+  localStorage.setItem('miya_preset_settings', JSON.stringify(all));
 }
-function getPresetKey(name) {
-  return getPresetKeys()[name] || '';
+function getPresetSetting(name) {
+  return getPresetSettings()[name] || {};
 }
 
-// Save current API key to whatever preset is currently active
-function saveCurrentPresetKey() {
-  const curKey = document.getElementById('api-key')?.value?.trim();
-  if (!curKey) return;
+// Save current settings to whatever preset is currently active
+function saveCurrentPresetSettings() {
   const curUrl = document.getElementById('api-url')?.value?.trim() || '';
   const curModel = document.getElementById('model-custom')?.value?.trim() || document.getElementById('model-sel')?.value || '';
+  const curKey = document.getElementById('api-key')?.value?.trim() || '';
+  const curStream = document.getElementById('stream-mode')?.value === 'true';
   const userPresets = getUserPresets();
   const allPresets = [...BUILTIN_PRESETS, ...userPresets];
   for (const p of allPresets) {
     if (p.apiUrl === curUrl && p.model === curModel) {
-      savePresetKey(p.name, curKey);
-      // Also update user preset's apiKey directly
+      savePresetSettings(p.name, { apiKey: curKey, model: curModel, stream: curStream });
+      // Also update user preset directly
       const up = userPresets.find(u => u.name === p.name);
-      if (up) { up.apiKey = curKey; saveUserPresets(userPresets); }
-      break;
+      if (up) { up.apiKey = curKey; up.model = curModel; up.stream = curStream; saveUserPresets(userPresets); }
+      return;
+    }
+  }
+  // No exact match — try URL-only match (user may have changed model)
+  for (const p of allPresets) {
+    if (p.apiUrl === curUrl) {
+      savePresetSettings(p.name, { apiKey: curKey, model: curModel, stream: curStream });
+      const up = userPresets.find(u => u.name === p.name);
+      if (up) { up.apiKey = curKey; up.model = curModel; up.stream = curStream; saveUserPresets(userPresets); }
+      return;
     }
   }
 }
@@ -3200,14 +3211,14 @@ function renderPresets() {
   if (!container) return;
   const userPresets = getUserPresets();
   const allPresets = [...BUILTIN_PRESETS, ...userPresets];
-  const presetKeys = getPresetKeys();
+  const presetSettings = getPresetSettings();
   const currentUrl = document.getElementById('api-url')?.value || '';
   const currentModel = document.getElementById('model-custom')?.value?.trim() || document.getElementById('model-sel')?.value || '';
 
   container.innerHTML = allPresets.map((p, i) => {
     const isUser = i >= BUILTIN_PRESETS.length;
-    const isActive = currentUrl === p.apiUrl && currentModel === p.model;
-    const hasKey = !!(p.apiKey || presetKeys[p.name]);
+    const isActive = currentUrl === p.apiUrl && currentModel === (presetSettings[p.name]?.model || p.model);
+    const hasKey = !!(p.apiKey || presetSettings[p.name]?.apiKey);
     const keyDot = hasKey ? '<span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-left:2px;"></span>' : '';
     const activeStyle = isActive ? 'border-color:var(--accent);background:var(--accent-dim);color:var(--accent);' : '';
     const deleteBtn = isUser ? `<span onclick="event.stopPropagation();deletePreset(${i - BUILTIN_PRESETS.length})" style="margin-left:4px;cursor:pointer;opacity:.5;font-size:11px;">✕</span>` : '';
@@ -3223,18 +3234,22 @@ function applyPreset(idx) {
   const p = allPresets[idx];
   if (!p) return;
 
-  // Save current API key to current preset before switching
-  saveCurrentPresetKey();
+  // Save current settings to current preset before switching
+  saveCurrentPresetSettings();
+
+  // Merge: preset defaults + saved overrides
+  const saved = getPresetSetting(p.name);
+  const finalModel = saved.model || p.model;
+  const finalKey = saved.apiKey || p.apiKey || '';
+  const finalStream = saved.stream !== undefined ? saved.stream : p.stream;
 
   document.getElementById('api-url').value = p.apiUrl;
-  // Restore API key: user preset has it directly, built-in preset uses localStorage
-  const savedKey = p.apiKey || getPresetKey(p.name);
-  if (savedKey) document.getElementById('api-key').value = savedKey;
+  if (finalKey) document.getElementById('api-key').value = finalKey;
   document.getElementById('model-sel').value = 'custom';
   document.getElementById('model-custom').style.display = 'block';
-  document.getElementById('model-custom').value = p.model;
-  if (p.stream !== undefined) {
-    document.getElementById('stream-mode').value = p.stream ? 'true' : 'false';
+  document.getElementById('model-custom').value = finalModel;
+  if (finalStream !== undefined) {
+    document.getElementById('stream-mode').value = finalStream ? 'true' : 'false';
   }
   renderPresets();
   showToast(`✅ 已切换到 ${p.name}`);
@@ -3257,7 +3272,7 @@ function showAddPreset() {
   const presets = getUserPresets();
   presets.push({ name, icon: icon || '🔧', apiUrl: url, apiKey: key, model, stream });
   saveUserPresets(presets);
-  if (key) savePresetKey(name, key);
+  savePresetSettings(name, { apiKey: key, model, stream });
   renderPresets();
   showToast(`✅ 已保存预设「${name}」`);
 }
@@ -3283,7 +3298,7 @@ function saveSettings() {
   S.settings.ctxDepth = document.getElementById('ctx-depth').value;
   S.settings.customSP = document.getElementById('custom-sp').value;
   S.settings.stream = document.getElementById('stream-mode').value === 'true';
-  saveCurrentPresetKey(); // Save API key to active preset
+  saveCurrentPresetSettings(); // Save all settings to active preset
   saveStorage(); showToast('✅ 已保存'); updateSendStatus(); renderPresets();
   if (CloudSync.isLoggedIn()) CloudSync.upload().catch(()=>{});
 }
