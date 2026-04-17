@@ -1,4 +1,4 @@
-const CACHE_NAME = 'miya-v3';
+const CACHE_NAME = 'miya-v3.1';
 const STATIC_ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './icon.svg'];
 
 self.addEventListener('install', e => {
@@ -20,17 +20,17 @@ self.addEventListener('fetch', e => {
         const clone = r.clone();
         caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
         return r;
-      }).catch(() => caches.match(e.request).then(r => r || caches.match('./index.html')))
+      }).catch(() => caches.match(e.request).then(c => c || caches.match('./')))
     );
   } else {
     e.respondWith(
-      caches.match(e.request).then(r => r || fetch(e.request).then(resp => {
-        if (resp.ok && resp.type === 'basic') {
-          const clone = resp.clone();
-          caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+      caches.match(e.request).then(c => c || fetch(e.request).then(r => {
+        if (r.ok) {
+          const clone = r.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
         }
-        return resp;
-      }).catch(() => r))
+        return r;
+      }))
     );
   }
 });

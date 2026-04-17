@@ -1254,6 +1254,59 @@ function getStorageKey() {
   return hash ? `miya_u_${hash}` : null;
 }
 
+// ===== IndexedDB Storage (unlimited capacity) =====
+const MiyaDB = {
+  DB_NAME: 'miya_db',
+  DB_VER: 1,
+  STORE: 'kv',
+  _db: null,
+
+  open() {
+    return new Promise((resolve, reject) => {
+      if (this._db) return resolve(this._db);
+      const req = indexedDB.open(this.DB_NAME, this.DB_VER);
+      req.onupgradeneeded = e => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(this.STORE)) {
+          db.createObjectStore(this.STORE);
+        }
+      };
+      req.onsuccess = e => { this._db = e.target.result; resolve(this._db); };
+      req.onerror = e => reject(e.target.error);
+    });
+  },
+
+  async get(key) {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.STORE, 'readonly');
+      const req = tx.objectStore(this.STORE).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  },
+
+  async set(key, val) {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.STORE, 'readwrite');
+      tx.objectStore(this.STORE).put(val, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  },
+
+  async del(key) {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.STORE, 'readwrite');
+      tx.objectStore(this.STORE).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+};
+
 // ===== Welcome Screen =====
 function showWelcome() {
   document.getElementById('welcome-screen').style.display = 'flex';
@@ -1374,8 +1427,8 @@ function closeSidebar() {
   }
 }
 
-function init() {
-  loadStorage(); setupUI(); renderAll(); setupMobileKeyboard();
+async function init() {
+  await loadStorage(); setupUI(); renderAll(); setupMobileKeyboard();
   updateErrBadge();
   updateSendStatus(); updateCloudUI();
   // Restore chat mode UI
@@ -1410,20 +1463,34 @@ function setupMobileKeyboard() {
   });
 }
 
-function loadStorage() {
+async function loadStorage() {
   const key = getStorageKey();
   if (!key) return;
   try {
-    const d = localStorage.getItem(key);
-    if (d) {
-      const p = JSON.parse(d);
-      // Deep merge settings to avoid losing fields on shallow Object.assign
-      if (p.settings && S.settings) {
-        S.settings = { ...S.settings, ...p.settings };
-        delete p.settings;
-      }
-      Object.assign(S, p);
+    // Try IndexedDB first (unlimited storage)
+    let idbData = null;
+    try { idbData = await MiyaDB.get(key); } catch(e) { console.warn('IDB read:', e); }
+
+    let parsed = null;
+    if (idbData) {
+      parsed = typeof idbData === 'string' ? JSON.parse(idbData) : idbData;
+    } else {
+      // Fallback: localStorage
+      const d = localStorage.getItem(key);
+      if (d) parsed = JSON.parse(d);
     }
+
+    if (parsed) {
+      // Deep merge settings to avoid losing fields on shallow Object.assign
+      if (parsed.settings && S.settings) {
+        S.settings = { ...S.settings, ...parsed.settings };
+        delete parsed.settings;
+      }
+      Object.assign(S, parsed);
+      // Migrate localStorage data to IndexedDB on first load
+      try { await MiyaDB.set(key, parsed); } catch(e){}
+    }
+
     // Fallback: restore API key from dedicated backup if main storage lost it
     if (!S.settings.apiKey) {
       const backupKey = localStorage.getItem(key + '_apikey');
@@ -1433,22 +1500,15 @@ function loadStorage() {
     if (S.settings.apiKey) {
       localStorage.setItem(key + '_apikey', S.settings.apiKey);
     }
-    // Restore diary/memories/prompts/chat from separate chunks if main lost them
-    if ((!S.diary || !S.diary.length)) {
-      const chunk = localStorage.getItem(key + '_diary');
-      if (chunk) try { S.diary = JSON.parse(chunk); } catch(e){}
-    }
-    if ((!S.memories || !S.memories.length)) {
-      const chunk = localStorage.getItem(key + '_mem');
-      if (chunk) try { S.memories = JSON.parse(chunk); } catch(e){}
-    }
-    if ((!S.prompts || !Object.keys(S.prompts).length)) {
-      const chunk = localStorage.getItem(key + '_prompts');
-      if (chunk) try { S.prompts = JSON.parse(chunk); } catch(e){}
-    }
-    if ((!S.chat || !S.chat.length)) {
-      const chunk = localStorage.getItem(key + '_chat');
-      if (chunk) try { S.chat = JSON.parse(chunk); } catch(e){}
+    // Restore diary/memories/prompts/chat — try IDB first, then localStorage
+    for (const [field, subKey] of [['diary','_diary'],['memories','_mem'],['prompts','_prompts'],['chat','_chat']]) {
+      if (S[field] && (Array.isArray(S[field]) ? S[field].length : Object.keys(S[field]).length)) continue;
+      try {
+        const chunk = await MiyaDB.get(key + subKey);
+        if (chunk) { S[field] = typeof chunk === 'string' ? JSON.parse(chunk) : chunk; continue; }
+      } catch(e){}
+      const ls = localStorage.getItem(key + subKey);
+      if (ls) try { S[field] = JSON.parse(ls); } catch(e){}
     }
     // Restore persona from prompts
     if (S.prompts) {
@@ -1473,7 +1533,7 @@ function loadStorage() {
   S.busy = false;
 }
 
-function saveStorage() {
+async function saveStorage() {
   const key = getStorageKey();
   if (!key) return;
   try {
@@ -1481,28 +1541,31 @@ function saveStorage() {
     if (S.settings.apiKey) {
       localStorage.setItem(key + '_apikey', S.settings.apiKey);
     }
-    localStorage.setItem(key, JSON.stringify(S));
-  } catch(e) {
-    // Quota exceeded — try saving large arrays separately and trimming main
-    if (e.name === 'QuotaExceededError' || e.message?.includes('quota')) {
-      try {
-        // Save large data chunks separately
-        if (S.diary?.length) localStorage.setItem(key + '_diary', JSON.stringify(S.diary));
-        if (S.memories?.length) localStorage.setItem(key + '_mem', JSON.stringify(S.memories));
-        if (S.prompts && Object.keys(S.prompts).length) localStorage.setItem(key + '_prompts', JSON.stringify(S.prompts));
-        if (S.chat?.length) localStorage.setItem(key + '_chat', JSON.stringify(S.chat));
-        // Save main without large arrays
-        const lite = { ...S, diary: [], memories: [], prompts: {}, chat: [] };
-        localStorage.setItem(key, JSON.stringify(lite));
-        showToast('⚠️ 存储空间不足，数据已分块保存');
-      } catch(e2) {
-        console.error('saveStorage fallback failed:', e2);
-        showToast('❌ 存储失败！请导出备份后清理浏览器数据');
-      }
-    } else {
-      console.error('saveStorage error:', e);
-      showToast('❌ 存储异常: ' + e.message);
+    // Save to IndexedDB (unlimited capacity) — primary storage
+    try {
+      await MiyaDB.set(key, JSON.stringify(S));
+    } catch(idbErr) {
+      console.error('IDB save failed:', idbErr);
     }
+    // Also save to localStorage as fallback (may fail on quota)
+    try {
+      localStorage.setItem(key, JSON.stringify(S));
+    } catch(e) {
+      if (e.name === 'QuotaExceededError' || e.message?.includes('quota')) {
+        try {
+          if (S.diary?.length) localStorage.setItem(key + '_diary', JSON.stringify(S.diary));
+          if (S.memories?.length) localStorage.setItem(key + '_mem', JSON.stringify(S.memories));
+          if (S.prompts && Object.keys(S.prompts).length) localStorage.setItem(key + '_prompts', JSON.stringify(S.prompts));
+          if (S.chat?.length) localStorage.setItem(key + '_chat', JSON.stringify(S.chat));
+          const lite = { ...S, diary: [], memories: [], prompts: {}, chat: [] };
+          localStorage.setItem(key, JSON.stringify(lite));
+        } catch(e2) {
+          console.error('localStorage save fallback failed:', e2);
+        }
+      }
+    }
+  } catch(e) {
+    console.error('saveStorage error:', e);
   }
 }
 
