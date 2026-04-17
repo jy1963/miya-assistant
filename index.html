@@ -1139,6 +1139,12 @@ body::after {
       </div>
 
       <div class="panel" id="panel-set">
+        <div class="sg"><label>⚡ API 预设</label>
+          <div id="preset-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;"></div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-s btn-sm" onclick="showAddPreset()" style="flex:1;">+ 添加当前为预设</button>
+          </div>
+        </div>
         <div class="sg"><label>🔗 API 地址</label><input type="text" id="api-url" placeholder="https://api.deepseek.com/v1"></div>
         <div class="sg"><label>🔑 API Key</label><form onsubmit="return false" style="display:inline"><input type="password" id="api-key" placeholder="sk-xxx..."></form></div>
         <div class="sg"><label>🤖 模型</label>
@@ -1481,6 +1487,7 @@ function setupUI() {
   ['diary-modal','mem-modal','analysis-modal'].forEach(id => {
     document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) closeModal(id); });
   });
+  renderPresets();
 }
 
 // ===== Import =====
@@ -3130,6 +3137,95 @@ ${memText.slice(0, 3000)}
   document.getElementById('status-dot').className = 'dot idle';
 }
 
+// ===== API Presets =====
+const BUILTIN_PRESETS = [
+  { name: 'DeepSeek', icon: '🐋', apiUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', stream: true },
+  { name: 'OpenAI', icon: '🤖', apiUrl: 'https://api.openai.com/v1', model: 'gpt-4o', stream: true },
+  { name: '小米 MiMo', icon: '📱', apiUrl: 'https://api.xiaomimimo.com/v1', model: 'MiMo-7B', stream: false },
+  { name: '月之暗面', icon: '🌙', apiUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', stream: true },
+  { name: '智谱 GLM', icon: '🧠', apiUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4', stream: true },
+  { name: '通义千问', icon: '🔮', apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo', stream: true },
+];
+
+function getUserPresets() {
+  try { return JSON.parse(localStorage.getItem('miya_presets') || '[]'); } catch(e) { return []; }
+}
+
+function saveUserPresets(presets) {
+  localStorage.setItem('miya_presets', JSON.stringify(presets));
+}
+
+function renderPresets() {
+  const container = document.getElementById('preset-list');
+  if (!container) return;
+  const userPresets = getUserPresets();
+  const allPresets = [...BUILTIN_PRESETS, ...userPresets];
+  // Check which preset matches current settings
+  const currentUrl = document.getElementById('api-url')?.value || '';
+  const currentModel = document.getElementById('model-sel')?.value || '';
+
+  container.innerHTML = allPresets.map((p, i) => {
+    const isUser = i >= BUILTIN_PRESETS.length;
+    const isActive = currentUrl === p.apiUrl && currentModel === p.model;
+    const activeStyle = isActive ? 'border-color:var(--accent);background:var(--accent-dim);color:var(--accent);' : '';
+    const deleteBtn = isUser ? `<span onclick="event.stopPropagation();deletePreset(${i - BUILTIN_PRESETS.length})" style="margin-left:4px;cursor:pointer;opacity:.5;font-size:11px;">✕</span>` : '';
+    return `<div onclick="applyPreset(${i})" style="display:inline-flex;align-items:center;gap:4px;padding:6px 12px;background:var(--bg3);border:1px solid ${isActive ? 'var(--accent)' : 'var(--border)'};border-radius:16px;cursor:pointer;font-size:12px;font-weight:500;transition:all .2s;color:${isActive ? 'var(--accent)' : 'var(--txt2)'};${activeStyle}">
+      ${p.icon} ${p.name}${deleteBtn}
+    </div>`;
+  }).join('');
+}
+
+function applyPreset(idx) {
+  const userPresets = getUserPresets();
+  const allPresets = [...BUILTIN_PRESETS, ...userPresets];
+  const p = allPresets[idx];
+  if (!p) return;
+
+  document.getElementById('api-url').value = p.apiUrl;
+  // Don't overwrite API key if preset doesn't have one or it's empty
+  if (p.apiKey) document.getElementById('api-key').value = p.apiKey;
+  document.getElementById('model-sel').value = 'custom';
+  document.getElementById('model-custom').style.display = 'block';
+  document.getElementById('model-custom').value = p.model;
+  if (p.stream !== undefined) {
+    document.getElementById('stream-mode').value = p.stream ? 'true' : 'false';
+  }
+  renderPresets();
+  showToast(`✅ 已切换到 ${p.name}`);
+}
+
+function showAddPreset() {
+  const url = document.getElementById('api-url').value.trim();
+  const key = document.getElementById('api-key').value.trim();
+  const modelSel = document.getElementById('model-sel').value;
+  const modelCustom = document.getElementById('model-custom').value.trim();
+  const model = modelSel === 'custom' ? modelCustom : modelSel;
+  const stream = document.getElementById('stream-mode').value === 'true';
+
+  if (!url) { showToast('❌ 请先填写 API 地址'); return; }
+  if (!model) { showToast('❌ 请先选择或填写模型'); return; }
+
+  const name = prompt('给这个预设起个名字：', model);
+  if (!name) return;
+  const icon = prompt('图标（emoji）：', '🔧');
+  const presets = getUserPresets();
+  presets.push({ name, icon: icon || '🔧', apiUrl: url, apiKey: key, model, stream });
+  saveUserPresets(presets);
+  renderPresets();
+  showToast(`✅ 已保存预设「${name}」`);
+}
+
+function deletePreset(idx) {
+  const presets = getUserPresets();
+  if (idx < 0 || idx >= presets.length) return;
+  const name = presets[idx].name;
+  if (!confirm(`删除预设「${name}」？`)) return;
+  presets.splice(idx, 1);
+  saveUserPresets(presets);
+  renderPresets();
+  showToast('✅ 已删除');
+}
+
 // ===== Settings =====
 function saveSettings() {
   S.settings.apiUrl = document.getElementById('api-url').value;
@@ -3140,7 +3236,7 @@ function saveSettings() {
   S.settings.ctxDepth = document.getElementById('ctx-depth').value;
   S.settings.customSP = document.getElementById('custom-sp').value;
   S.settings.stream = document.getElementById('stream-mode').value === 'true';
-  saveStorage(); showToast('✅ 已保存'); updateSendStatus();
+  saveStorage(); showToast('✅ 已保存'); updateSendStatus(); renderPresets();
   if (CloudSync.isLoggedIn()) CloudSync.upload().catch(()=>{});
 }
 
