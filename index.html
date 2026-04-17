@@ -2053,7 +2053,7 @@ function updateThinkingStep(box, stepIdx, steps) {
     html += `<div class="tb-step ${cls}">${icon} <span>${label}</span></div>`;
   });
   box.innerHTML = html;
-  document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+  smartScroll(document.getElementById('chat'));
 }
 
 function removeThinkingBox() {
@@ -2488,7 +2488,7 @@ function addPlainThinking() {
     <div class="ds-thinking-body" id="ds-think-body"></div>
   `;
   c.appendChild(d);
-  c.scrollTop = c.scrollHeight;
+  smartScroll(c);
 
   // Timer — use setInterval for reliable cleanup
   const timerEl = document.getElementById('ds-think-time');
@@ -2717,13 +2717,22 @@ function addMsg(role, content, streaming=false) {
   m.textContent = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
   d.appendChild(b); d.appendChild(m);
   c.appendChild(d);
-  c.scrollTop = c.scrollHeight;
+  smartScroll(c);
   return d;
+}
+
+// Smart scroll: only auto-scroll if user is already at/near bottom
+function isNearBottom(el, threshold = 80) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+}
+
+function smartScroll(el) {
+  if (isNearBottom(el)) el.scrollTop = el.scrollHeight;
 }
 
 function updMsg(el, content) {
   el.querySelector('.bubble').textContent = content;
-  document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+  smartScroll(document.getElementById('chat'));
 }
 
 function addTyping() {
