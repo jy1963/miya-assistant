@@ -2285,6 +2285,7 @@ async function send() {
   document.getElementById('stop-btn').style.display = 'flex';
   document.getElementById('status-dot').className = 'dot thinking';
   inp.value = ''; inp.style.height = 'auto';
+  inp.focus(); // keep keyboard open on mobile
   updateSendStatus();
 
   const w = document.getElementById('welcome');
@@ -2417,25 +2418,27 @@ function addPlainThinking() {
   c.appendChild(d);
   c.scrollTop = c.scrollHeight;
 
-  // Timer
+  // Timer — use setInterval for reliable cleanup
   const timerEl = document.getElementById('ds-think-time');
-  const tick = () => {
-    if (!document.getElementById('ds-thinking-box')) return;
+  const timerId = setInterval(() => {
+    if (!document.getElementById('ds-thinking-box')) { clearInterval(timerId); return; }
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
     timerEl.textContent = elapsed + 's';
-    d._timer = requestAnimationFrame(() => setTimeout(tick, 200));
-  };
-  tick();
+  }, 500);
+  d._timerId = timerId;
+  d._startTime = startTime;
 
-  // Click to expand/collapse
+  // Click to expand/collapse (use pointerdown for faster mobile response)
   const head = d.querySelector('.ds-thinking-header');
   const body = d.querySelector('.ds-thinking-body');
-  head.addEventListener('click', () => {
+  const toggleThink = (e) => {
+    e.preventDefault(); e.stopPropagation();
     head.classList.toggle('expanded');
     body.classList.toggle('visible');
-  });
+  };
+  head.addEventListener('pointerdown', toggleThink);
+  d._cleanup = () => { clearInterval(timerId); head.removeEventListener('pointerdown', toggleThink); };
 
-  d._startTime = startTime;
   return d;
 }
 
@@ -2443,8 +2446,9 @@ function finishPlainThinking(thinkingContent) {
   const box = document.getElementById('ds-thinking-box');
   if (!box) return;
 
-  // Stop timer
-  if (box._timer) cancelAnimationFrame(box._timer);
+  // Stop timer definitively
+  if (box._cleanup) box._cleanup();
+  else if (box._timerId) clearInterval(box._timerId);
 
   const elapsed = Math.floor((Date.now() - box._startTime) / 1000);
   const spinner = document.getElementById('ds-think-spinner');
@@ -2465,11 +2469,20 @@ function finishPlainThinking(thinkingContent) {
   if (thinkingContent && body) {
     body.textContent = thinkingContent;
   }
+
+  // Refocus input after thinking finishes (mobile keyboard fix)
+  setTimeout(() => document.getElementById('msg-input')?.focus(), 100);
 }
 
 function removePlainThinking() {
   const box = document.getElementById('ds-thinking-box');
-  if (box) box.remove();
+  if (box) {
+    if (box._cleanup) box._cleanup();
+    else if (box._timerId) clearInterval(box._timerId);
+    box.remove();
+  }
+  // Refocus input after removal (mobile keyboard fix)
+  setTimeout(() => document.getElementById('msg-input')?.focus(), 100);
 }
 
 async function sendPlain(text) {
@@ -2479,6 +2492,7 @@ async function sendPlain(text) {
   document.getElementById('stop-btn').style.display = 'flex';
   document.getElementById('status-dot').className = 'dot thinking';
   inp.value = ''; inp.style.height = 'auto';
+  inp.focus(); // keep keyboard open on mobile
   updateSendStatus();
 
   const w = document.getElementById('welcome');
@@ -2489,6 +2503,9 @@ async function sendPlain(text) {
 
   // Clean old history
   cleanPlainChat();
+
+  // Re-focus after DOM update (mobile keyboard fix)
+  setTimeout(() => inp.focus(), 50);
 
   let thinkEl = null;
   try {
